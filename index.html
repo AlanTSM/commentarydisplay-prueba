@@ -2688,7 +2688,7 @@
             <div id="inputToggle" onclick="toggleInput()">▲</div>
         </div>
         <div id="prueba-aviso" style="margin:6px 0 12px;padding:8px 12px;border-radius:8px;background:#3b2a00;border:1px solid #f59e0b;color:#fde68a;font-size:13px;line-height:1.4;text-align:center">
-            Versión de PRUEBA de la vista de campo (rama vista-campo). Se abre con Manchester City – Villarreal (Supercopa de Europa T38) ya cargado.
+            Versión de PRUEBA de la vista de campo (rama vista-campo, sesiones 8-10: movimiento continuo, cambio de campo, banquillos, camilla y entrenadores). Se abre con Manchester City – Villarreal (Supercopa de Europa T38) ya cargado.
             Para probar otro partido, pulsa ▼ junto al título, borra el texto y pega otro informe.
         </div>
 
@@ -7976,6 +7976,8 @@
                 started: simulationStarted,
                 paused: isPaused,
                 finished: matchFinished,
+                seeking: campoSeekUntil != null || campoSeekPlayIndex != null || campoSeekUntilLine != null,
+                redCarded: Array.from(redCardedPlayers || []),
                 score: (document.getElementById('score') || {}).textContent || '0 - 0',
                 narration: (document.getElementById('narration') || {}).textContent || '',
                 playersIn: findPlayersInText,

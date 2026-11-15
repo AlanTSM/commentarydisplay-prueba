@@ -41,7 +41,8 @@
     var numbers = new Map();
     var nextNumber = { home: 1, away: 1 };
     var numberedMatch = '';
-    var ball = { x: 50, y: 50 };
+    var ball = { x: 50, y: 50, h: 0, state: 'free', owner: null };
+    var ballShadowEl = null;
     var lastKind = 'play';
     var lastPlayIndex = -1;
     var parsedPlays = [];
@@ -49,6 +50,7 @@
     var lastMatchId = '';
     var refreshing = false;
     var dragging = false;
+    var keepViewOnReset = false;
     var built = false;
     var sliderPausedByUs = false;
     var playerState = {};
@@ -244,6 +246,8 @@
 
     function classify(text) {
         var s = String(text || '').toLowerCase();
+        // «ocasión manifiesta de gol», «dedica el gol al banquillo»... no son un gol de esta jugada.
+        s = s.replace(/ocasi[oó]n (?:manifiesta )?de gol|posible gol|dedica el gol|celebra el gol|tras el gol/g, ' ');
         if (/autogol|propia puerta/.test(s)) return 'own-goal';
         // Evitar falsos positivos como "Golpea las vallas".
         if (/¡+gol|go{3,}l|(?:^|[^\wáéíóúñ])¡?gol(?:es)?\b/i.test(s)) return 'goal';
@@ -715,13 +719,28 @@
         svg.appendChild(goals);
 
         var labels = svgEl('g', { fill: 'rgba(255,255,255,0.45)', 'font-size': '14', 'font-family': 'Segoe UI, sans-serif', 'text-anchor': 'middle' });
-        labels.appendChild(textAt(x + 80, y + 22, 'Local'));
-        labels.appendChild(textAt(x + w - 80, y + 22, 'Visitante'));
+        var lblL = textAt(x + 80, y + 22, ends.flipped ? 'Visitante' : 'Local');
+        var lblR = textAt(x + w - 80, y + 22, ends.flipped ? 'Local' : 'Visitante');
+        labels.appendChild(lblL);
+        labels.appendChild(lblR);
+        ends.labels = [lblL, lblR];
         svg.appendChild(labels);
+
+        // Fuera del campo (banda de abajo): banquillos, entrenadores y asistencias.
+        offLayer = svgEl('g', { 'class': 'campo-off' });
+        benchLayer = svgEl('g', { 'class': 'campo-benches' });
+        staffLayer = svgEl('g', { 'class': 'campo-staff-layer' });
+        offLayer.appendChild(benchLayer);
+        offLayer.appendChild(staffLayer);
+        svg.appendChild(offLayer);
+        benchSig = '';
+        managers = { home: null, away: null };
 
         playersLayer = svgEl('g', { 'class': 'campo-players' });
         svg.appendChild(playersLayer);
 
+        ballShadowEl = svgEl('ellipse', { 'class': 'campo-ball-shadow', rx: 9, ry: 4, fill: '#000', opacity: 0, cx: 0, cy: 0 });
+        svg.appendChild(ballShadowEl);
         var ballG = svgEl('g', { 'class': 'campo-ball', filter: 'url(#campo-shadow)' });
         ballG.appendChild(svgEl('circle', { r: 9, fill: '#f4f4f4', stroke: '#222', 'stroke-width': 1.5, cx: 0, cy: 0 }));
         ballG.appendChild(svgEl('path', {
@@ -1559,8 +1578,12 @@
     }
 
     function effectiveLineups(d, play) {
-        var home = (d.homeStarters || []).map(copyPlayer);
-        var away = (d.awayStarters || []).map(copyPlayer);
+        // Los expulsados ya no están en el campo (en directo se van andando a vestuarios).
+        var red = {};
+        (d.redCarded || []).forEach(function (n) { red[n] = true; });
+        function onPitch(p) { return p && !red[p.name]; }
+        var home = (d.homeStarters || []).filter(onPitch).map(copyPlayer);
+        var away = (d.awayStarters || []).filter(onPitch).map(copyPlayer);
         if (!play || (play.kind !== 'shootout' && play.kind !== 'shootout-kick')) {
             return { home: home, away: away };
         }
@@ -1920,37 +1943,425 @@
         return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     }
 
-    function posOnPath(path, t) {
-        if (!path || !path.length) return { x: ball.x, y: ball.y };
-        if (path.length === 1 || t <= 0) return { x: path[0].x, y: path[0].y };
-        if (t >= 1) return { x: path[path.length - 1].x, y: path[path.length - 1].y };
-        var i, d, lens = [], total = 0;
-        for (i = 1; i < path.length; i++) {
-            d = Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
-            lens.push(Math.max(d, 0.05));
-            total += Math.max(d, 0.05);
-        }
-        var dist = t * total;
-        for (i = 0; i < lens.length; i++) {
-            if (dist <= lens[i] + 0.0001) {
-                var u = dist / lens[i];
-                return { x: lerp(path[i].x, path[i + 1].x, u), y: lerp(path[i].y, path[i + 1].y, u) };
+    /* ================= Motor de movimiento continuo (sesiones 8-9) =================
+       Estilo Championship Manager 2002/03: cada jugador, el árbitro y el balón tienen posición y
+       velocidad propias y se mueven en cada fotograma (requestAnimationFrame) hacia su objetivo,
+       acelerando y frenando. Nadie salta de sitio: si llega una jugada nueva a mitad de otra,
+       cada uno cambia de rumbo desde donde está. El balón siempre está pegado al pie de alguien
+       o viajando entre dos puntos (pase raso, pase bombeado, conducción o tiro).
+       Solo el deslizador coloca el estado exacto de una jugada al instante. */
+    var M_X = 1.05, M_Y = 0.68;                  // metros por cada 1 % de ancho / alto
+    var SPD_MIN = 1.3, SPD_MAX = 9.2;            // m/s (andar ... esprintar), a tempo 1
+    var BALL_SPEED = { ground: 15, lofted: 13, shot: 27, carry: 0, reset: 11 };
+    var motor = {
+        raf: 0, last: 0, running: false,
+        phases: [], phase: null, phaseT: 0, phaseDur: 1,
+        actions: [], action: null, actionT: 0,
+        scale: 1, frame: 0, seekFrame: -1,
+        stats: { plays: 0, cut: 0, droppedPhases: 0 }
+    };
+
+    function lineMs() {
+        var sel = $('speedSelect');
+        var v = sel ? parseInt(sel.value, 10) : 2000;
+        return v > 0 ? v : 2000;
+    }
+
+    // Tempo: a más velocidad de narración, más rápido se mueve todo (para no quedarse atrás).
+    function tempo() {
+        return clamp(2000 / lineMs(), 0.55, 4);
+    }
+
+    function mDist(ax, ay, bx, by) {
+        return Math.hypot((bx - ax) * M_X, (by - ay) * M_Y);
+    }
+
+    function allMovers() {
+        var arr = Object.keys(playerState).map(function (k) { return playerState[k]; });
+        return arr;
+    }
+
+    function setMoverTarget(st, tx, ty, durSec, opts) {
+        opts = opts || {};
+        var d = mDist(st.x, st.y, tx, ty);
+        // Tiempo de reacción: los que intervienen arrancan ya; el resto, un poco después y escalonados.
+        var react = opts.involved ? 0 : (opts.react != null ? opts.react : 0.05 + Math.random() * 0.25);
+        var avail = Math.max(0.4, durSec * 0.6 - react);
+        // Velocidad para llegar a tiempo: andando, trotando o esprintando según haga falta.
+        var spd = clamp(d / avail, SPD_MIN, SPD_MAX);
+        if (opts.jog) spd = Math.min(spd, Math.max(SPD_MIN, Math.min(4.6, d / Math.max(0.4, durSec * 0.9))));
+        st.pend = { tx: tx, ty: ty, spd: spd, at: performance.now() + react * 1000 / tempo() };
+        st.hx = tx; st.hy = ty;
+        st.idleAt = performance.now() + 900 + Math.random() * 1600;
+        if (react <= 0) applyPending(st, performance.now());
+    }
+
+    function applyPending(st, now) {
+        if (!st.pend || now < st.pend.at) return;
+        st.tx = st.pend.tx; st.ty = st.pend.ty; st.spd = st.pend.spd;
+        st.pend = null;
+    }
+
+    function stepMover(st, dt, tp) {
+        if (st.vx == null) { st.vx = 0; st.vy = 0; }
+        if (st.tx == null) { st.tx = st.x; st.ty = st.y; }
+        var dx = (st.tx - st.x) * M_X, dy = (st.ty - st.y) * M_Y;
+        var d = Math.hypot(dx, dy);
+        var maxS = (st.spd || 3) * tp;
+        var dec = 6.5 * tp;
+        var want = d < 0.03 ? 0 : Math.min(maxS, Math.sqrt(2 * dec * d));
+        var wx = d > 0 ? dx / d * want : 0, wy = d > 0 ? dy / d * want : 0;
+        // Aceleración limitada: arranca y frena de forma progresiva.
+        var acc = 11 * tp * dt;
+        var ax = wx - st.vx, ay = wy - st.vy, al = Math.hypot(ax, ay);
+        if (al > acc) { ax = ax / al * acc; ay = ay / al * acc; }
+        st.vx += ax; st.vy += ay;
+        st.x = clamp(st.x + st.vx * dt / M_X, -6, 106);
+        st.y = clamp(st.y + st.vy * dt / M_Y, -12, 112);
+        return d;
+    }
+
+    // Pequeños movimientos de espera: nadie se queda como una estatua mientras la jugada sigue.
+    function idleWander(st, now, d) {
+        if (st.hx == null || d > 0.6 || now < (st.idleAt || 0)) return;
+        var r = st.pos === 'GK' ? 0.6 : 1.6;
+        var a = Math.random() * Math.PI * 2, m = Math.random() * r;
+        st.tx = clamp(st.hx + Math.cos(a) * m / M_X, 1, 99);
+        st.ty = clamp(st.hy + Math.sin(a) * m / M_Y, 2, 98);
+        st.spd = 1.2 + Math.random() * 0.8;
+        st.idleAt = now + 1300 + Math.random() * 2200;
+    }
+
+    function holderOf(key) {
+        return key ? playerState[key] || null : null;
+    }
+
+    function nearestPlayerTo(x, y, maxM, fromTargets) {
+        var best = null, bd = maxM;
+        Object.keys(playerState).forEach(function (k) {
+            var st = playerState[k];
+            var px = fromTargets ? (st.tx != null ? st.tx : st.x) : st.x;
+            var py = fromTargets ? (st.ty != null ? st.ty : st.y) : st.y;
+            var dd = mDist(px, py, x, y);
+            if (dd < bd) { bd = dd; best = k; }
+        });
+        return best;
+    }
+
+    function isGoalPoint(pt) {
+        return pt && (pt.x <= 3.5 || pt.x >= 96.5) && Math.abs(pt.y - 50) < 9;
+    }
+
+    // Traduce la ruta de balón de una fase (puntos) en acciones: conducir, pasar, chutar.
+    function buildBallActions(ph) {
+        var path = (ph.ballPath || []).slice();
+        var targets = ph.players || {};
+        var nodes = path.map(function (pt) {
+            var best = null, bd = 2.8;
+            Object.keys(targets).forEach(function (k) {
+                var t = targets[k];
+                var dd = mDist(t.x, t.y, pt.x, pt.y);
+                if (dd < bd) { bd = dd; best = k; }
+            });
+            return { pt: pt, who: best };
+        });
+        var acts = [];
+        var prevWho = ball.state === 'held' ? ball.owner : null;
+        var prevPt = { x: ball.x, y: ball.y };
+        for (var i = 0; i < nodes.length; i++) {
+            var n = nodes[i];
+            var next = nodes[i + 1];
+            if (!n.who && next && !next.who && !isGoalPoint(n.pt)) continue;   // punto intermedio de una parábola
+            var dist = mDist(prevPt.x, prevPt.y, n.pt.x, n.pt.y);
+            if (n.who && n.who === prevWho) {
+                acts.push({ type: 'carry', who: n.who, pt: n.pt });
+            } else if (n.who) {
+                acts.push({ type: 'pass', to: n.who, pt: n.pt, lofted: dist > 26 || !!(nodes[i - 1] && !nodes[i - 1].who && i > 0 && path.length > 2) });
+            } else if (dist > 0.8 || i === nodes.length - 1) {
+                acts.push({ type: 'kick', pt: n.pt, shot: isGoalPoint(n.pt) || ph.shootout, lofted: !isGoalPoint(n.pt) && (dist > 22 || i > 0 && path.length > 2) });
             }
-            dist -= lens[i];
+            prevWho = n.who || null;
+            prevPt = n.pt;
         }
-        return { x: path[path.length - 1].x, y: path[path.length - 1].y };
+        return acts;
+    }
+
+    function launchBall(to, kind, receiver) {
+        var tp = tempo();
+        var from = { x: ball.x, y: ball.y };
+        var dist = Math.max(0.5, mDist(from.x, from.y, to.x, to.y));
+        var spd = Math.min(36, (BALL_SPEED[kind] || 14) * tp);   // tope: ni en «Turbo» el balón salta
+        var dur = dist / spd + (kind === 'lofted' ? 0.25 / tp : 0);
+        ball.state = 'flight';
+        ball.owner = null;
+        ball.lock = false;
+        ball.fl = { from: from, to: { x: to.x, y: to.y }, t: 0, dur: dur, kind: kind, H: kind === 'lofted' ? clamp(dist / 30, 0.35, 1.1) : (kind === 'reset' ? 0.5 : 0), receiver: receiver || null };
+    }
+
+    function startAction(a) {
+        motor.action = a;
+        motor.actionT = 0;
+        if (!a) return;
+        a.launched = false;
+    }
+
+    function stepAction(dt) {
+        var a = motor.action;
+        if (!a) {
+            if (motor.actions.length) startAction(motor.actions.shift());
+            return;
+        }
+        motor.actionT += dt;
+        var tp = tempo();
+        if (a.type === 'carry') {
+            var who = holderOf(a.who);
+            if (!who) { startAction(null); return; }
+            if (ball.state !== 'held' || ball.owner !== a.who) {
+                // El balón no lo tiene él: si está cerca lo controla; si no, se lo pasan.
+                if (ball.state !== 'flight' && mDist(ball.x, ball.y, who.x, who.y) < 2.2) { ball.state = 'held'; ball.owner = a.who; }
+                else if (ball.state !== 'flight') { launchBall({ x: who.tx, y: who.ty }, 'ground', a.who); }
+            }
+            var dd = mDist(who.x, who.y, who.tx, who.ty);
+            if ((ball.owner === a.who && dd < 1.4) || motor.actionT > 3.2 / tp) startAction(null);
+            return;
+        }
+        if (!a.launched) {
+            // Preparación breve: el pasador se acomoda antes de soltarla.
+            var owner = holderOf(ball.owner);
+            var ready = !owner || mDist(owner.x, owner.y, owner.tx, owner.ty) < 2.5;
+            if (ball.state === 'flight') return;
+            if ((ready && motor.actionT > 0.12 / tp) || motor.actionT > 0.9 / tp) {
+                var to = a.pt;
+                var recv = a.type === 'pass' ? holderOf(a.to) : null;
+                if (recv) to = { x: recv.tx, y: recv.ty };
+                var kind = a.shot ? 'shot' : (a.lofted ? 'lofted' : 'ground');
+                if (recv && owner && recv.side !== owner.side) kind = recv.pos === 'GK' ? 'shot' : 'ground';
+                if (ball.lock || (!owner && ball.state === 'free' && mDist(ball.x, ball.y, to.x, to.y) > 20)) kind = kind === 'shot' ? kind : 'reset';
+                launchBall(to, kind, a.type === 'pass' ? a.to : null);
+                if (a.shot && isGoalPoint(to)) ball.fl.net = true;
+                a.launched = true;
+                motor.actionT = 0;
+            }
+            return;
+        }
+        if (ball.state !== 'flight') startAction(null);
+    }
+
+    function stepBall(dt) {
+        if (ball.state === 'flight' && ball.fl) {
+            var f = ball.fl;
+            f.t += dt;
+            var u = clamp(f.t / f.dur, 0, 1);
+            // Pase raso: sale fuerte y se frena por el rozamiento. Bombeado y tiro: velocidad casi constante.
+            var e = f.kind === 'ground' ? 1 - Math.pow(1 - u, 1.6) : u;
+            ball.x = lerp(f.from.x, f.to.x, e);
+            ball.y = lerp(f.from.y, f.to.y, e);
+            ball.h = f.H ? Math.sin(Math.PI * u) * f.H : 0;
+            if (u >= 1) {
+                ball.state = 'free';
+                ball.h = 0;
+                ball.lock = !!f.net;
+                ball.fl = null;
+            }
+            return;
+        }
+        if (ball.state === 'held') {
+            var o = holderOf(ball.owner);
+            if (!o) { ball.state = 'free'; return; }
+            var sp = Math.hypot(o.vx || 0, o.vy || 0);
+            var fx, fy;
+            if (sp > 0.4) { fx = o.vx / sp; fy = o.vy / sp; }
+            else { fx = o.side === 'home' ? 1 : -1; fy = 0; }
+            // Conducción: toques cortos. Con el jugador en carrera el balón se adelanta y vuelve al pie.
+            o.touch = (o.touch || 0) + dt * (sp > 2 ? 1.6 + sp * 0.18 : 0);
+            var reach = sp > 2 ? 0.7 + 0.9 * Math.abs(Math.sin(o.touch * Math.PI)) : 0.75;
+            var tx = o.x + fx * reach / M_X, ty = o.y + fy * reach / M_Y;
+            var k = Math.min(1, dt * 14);
+            ball.x += (tx - ball.x) * k;
+            ball.y += (ty - ball.y) * k;
+            ball.h = 0;
+            return;
+        }
+        // Balón suelto: lo controla el primero que llega (salvo si está dentro de la red).
+        if (!ball.lock) {
+            var near = nearestPlayerTo(ball.x, ball.y, 1.5, false);
+            if (near) { ball.state = 'held'; ball.owner = near; }
+        }
+    }
+
+    function startMotorPhase(ph) {
+        motor.phase = ph;
+        motor.phaseT = 0;
+        if (!ph) return;
+        var dur = Math.max(0.35, (ph.ms || 700) / 1000 * motor.scale);
+        motor.phaseDur = dur;
+        var targets = ph.players || {};
+        var involved = {};
+        (ph.highlight || []).forEach(function (n) { involved[n] = true; });
+        (ph.ballPath || []).forEach(function (pt) {
+            var k = nearestPlayerTo(pt.x, pt.y, 2.8, true);
+            if (k) involved[k] = true;
+        });
+        if (ball.owner) involved[ball.owner] = true;
+        Object.keys(playerState).forEach(function (k) {
+            var st = playerState[k];
+            var t = targets[k];
+            if (!t) return;
+            var inv = involved[k] || involved[st.name];
+            if (st.hold) { st.hx = t.x; st.hy = t.y; return; }   // atendido por las asistencias
+            // Vuelta a la posición (tras gol, falta, saque...): se vuelve trotando, sin prisas.
+            setMoverTarget(st, t.x, t.y, dur, { involved: inv, jog: ph.pose === false && !ph.kickoff });
+        });
+        if (ph.ref) {
+            refState.tx = ph.ref.x; refState.ty = ph.ref.y; refState.hx = ph.ref.x; refState.hy = ph.ref.y;
+            refState.spd = clamp(mDist(refState.x, refState.y, ph.ref.x, ph.ref.y) / Math.max(0.4, dur * 0.8), SPD_MIN, 7.5);
+        }
+        if (ph.highlight) highlightPlayers(ph.highlight);
+        if (ui.caption) ui.caption.classList.toggle('kickoff-on', !!ph.kickoff);
+        motor.actions = buildBallActions(ph);
+        startAction(null);
+    }
+
+    function snapMotorPhase(ph) {
+        if (!ph) return;
+        var targets = ph.players || {};
+        Object.keys(playerState).forEach(function (k) {
+            var st = playerState[k];
+            var t = targets[k];
+            if (!t) return;
+            st.x = t.x; st.y = t.y; st.tx = t.x; st.ty = t.y; st.hx = t.x; st.hy = t.y; st.vx = 0; st.vy = 0; st.pend = null;
+            st.idleAt = performance.now() + 600 + Math.random() * 1500;
+            placePlayerEl(st);
+        });
+        if (ph.ref) {
+            refState.x = ph.ref.x; refState.y = ph.ref.y; refState.tx = ph.ref.x; refState.ty = ph.ref.y;
+            refState.hx = ph.ref.x; refState.hy = ph.ref.y; refState.vx = 0; refState.vy = 0;
+            placeRefEl();
+        }
+        var end = (ph.ballPath && ph.ballPath.length) ? ph.ballPath[ph.ballPath.length - 1] : { x: ball.x, y: ball.y };
+        ball.x = end.x; ball.y = end.y; ball.h = 0; ball.fl = null;
+        var near = nearestPlayerTo(end.x, end.y, 2.8, false);
+        if (near && !isGoalPoint(end)) { ball.state = 'held'; ball.owner = near; }
+        else { ball.state = 'free'; ball.owner = null; ball.lock = isGoalPoint(end); }
+        placeBall();
+        if (ph.highlight) highlightPlayers(ph.highlight);
+        if (ui.caption) ui.caption.classList.toggle('kickoff-on', !!ph.kickoff);
+        motor.phase = null;
+        motor.phases = [];
+        motor.actions = [];
+        motor.action = null;
+        motor.seekFrame = motor.frame;
+        window.__seeking = true;   // marca para el medidor de fluidez: este salto es del deslizador
+    }
+
+    function motorTick(now) {
+        motor.raf = requestAnimationFrame(motorTick);
+        var dt = motor.last ? (now - motor.last) / 1000 : 0.016;
+        motor.last = now;
+        if (document.hidden || !built) return;
+        if (window.__seeking && motor.frame > motor.seekFrame) window.__seeking = false;
+        dt = clamp(dt, 0, 0.05);
+        motor.frame++;
+        var tp = tempo();
+        // Fase actual: cuando termina (tiempo cumplido y balón entregado) empieza la siguiente.
+        if (motor.phase) {
+            motor.phaseT += dt;
+            stepAction(dt);
+            var ballBusy = motor.action || motor.actions.length || ball.state === 'flight';
+            if (motor.phaseT >= motor.phaseDur && !ballBusy) {
+                startMotorPhase(motor.phases.length ? motor.phases.shift() : null);
+            } else if (motor.phaseT > motor.phaseDur + 4 / tp) {
+                motor.actions = []; motor.action = null;
+                startMotorPhase(motor.phases.length ? motor.phases.shift() : null);
+            }
+        }
+        var allowIdle = !motor.phase || motor.phaseT > motor.phaseDur * 0.9;
+        Object.keys(playerState).forEach(function (k) {
+            var st = playerState[k];
+            if (st.x == null) return;
+            if (st.pend) applyPending(st, now);
+            var d = stepMover(st, dt, tp);
+            if (allowIdle && !st.hold && !(motor.phase && motor.phase.pose)) idleWander(st, now, d);
+            placePlayerEl(st);
+        });
+        if (refState.el) {
+            stepMover(refState, dt, tp);
+            placeRefEl();
+        }
+        stepBall(dt);
+        placeBall();
+        stepLeavers(dt, tp);
+        stepScenes(dt, tp);
+        stepManagers(dt, now);
+    }
+
+    function ensureMotor() {
+        if (motor.running) return;
+        motor.running = true;
+        motor.last = 0;
+        motor.raf = requestAnimationFrame(motorTick);
+    }
+
+    // Compatibilidad: inicia una fase (animada) o la coloca al instante.
+    function startPhase(phase, immediate) {
+        ensureMotor();
+        if (immediate) snapMotorPhase(phase);
+        else { motor.phases = []; startMotorPhase(phase); }
+    }
+
+    function playLines(play) {
+        if (!play) return 3;
+        if (play.lines && play.lines.length) return play.lines.length;
+        if (!play.text) return 3;
+        return Math.max(1, String(play.text).split('\n').filter(function (l) { return l.trim(); }).length);
+    }
+
+    function playResolved(play, d, immediate) {
+        ensureMotor();
+        setEnds(periodOf(play), immediate);
+        if (immediate) resetStaff();
+        var resolved = resolvePlay(play, d);
+        var phases = resolved.phases || [];
+        if (!phases.length) return;
+        if (immediate) {
+            // Deslizador: estado exacto de la pose característica (celebración, llegada...), al instante.
+            var pose = null;
+            for (var pi = phases.length - 1; pi >= 0; pi--) {
+                if (phases[pi].pose !== false) { pose = phases[pi]; break; }
+            }
+            snapMotorPhase(pose || phases[phases.length - 1]);
+            return;
+        }
+        // Repartir las fases a lo largo de lo que dura la narración de la jugada.
+        var avail = playLines(play) * lineMs() / 1000 * 0.75;
+        var sum = phases.reduce(function (a, p) { return a + (p.ms || 700) / 1000; }, 0);
+        motor.scale = clamp(avail / Math.max(0.3, sum), 0.6, 4.5);
+        motor.stats.plays++;
+        if (motor.phases.length || motor.phase) motor.stats.cut++;
+        motor.stats.droppedPhases += motor.phases.length;
+        motor.phases = phases.slice(1);
+        startMotorPhase(phases[0]);
+        playEvents(play, d);
     }
 
     function placeBall() {
         if (!ballEl) return;
-        var p = toSvg(ball.x, ball.y);
+        var p = toView(ball.x, ball.y);
         var bk = 1 + (nodeScale - 1) * 0.8;
-        ballEl.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')' + (bk !== 1 ? ' scale(' + bk.toFixed(3) + ')' : ''));
+        var h = ball.h || 0;
+        // Balón bombeado: sube (se dibuja más arriba y más grande) y su sombra queda en el suelo.
+        var lift = h * 26 * bk;
+        var sc = bk * (1 + h * 0.45);
+        ballEl.setAttribute('transform', 'translate(' + p.x.toFixed(2) + ',' + (p.y - lift).toFixed(2) + ')' + (sc !== 1 ? ' scale(' + sc.toFixed(3) + ')' : ''));
+        if (ballShadowEl) {
+            ballShadowEl.setAttribute('transform', 'translate(' + p.x.toFixed(2) + ',' + (p.y + 6 * bk).toFixed(2) + ') scale(' + (bk * (1 - h * 0.35)).toFixed(3) + ')');
+            ballShadowEl.setAttribute('opacity', h > 0.02 ? (0.45 - h * 0.15).toFixed(2) : '0');
+        }
     }
 
     function placeRefEl() {
         if (!refState || !refState.el) return;
-        var p = toSvg(refState.x, refState.y);
+        var p = toView(refState.x, refState.y);
         refState.el.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')' + (nodeScale !== 1 ? ' scale(' + nodeScale.toFixed(3) + ')' : ''));
     }
 
@@ -1995,105 +2406,492 @@
 
     function placePlayerEl(st) {
         if (!st || !st.el) return;
-        var p = toSvg(st.x, st.y);
+        var p = toView(st.x, st.y);
         st.el.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')' + (nodeScale !== 1 ? ' scale(' + nodeScale.toFixed(3) + ')' : ''));
     }
 
-    function applyPlayerTargets(targets, t) {
-        Object.keys(playerState).forEach(function (k) {
-            var st = playerState[k];
-            var from = anim.fromPlayers[k] || { x: st.x, y: st.y };
-            var to = (targets && targets[k]) || { x: st.x, y: st.y };
-            st.x = lerp(from.x, to.x, t);
-            st.y = lerp(from.y, to.y, t);
-            placePlayerEl(st);
+    /* ================= Sesión 10: cambio de campo, banquillos, cambios, expulsiones, lesiones y entrenadores =================
+       Coordenadas: el motor trabaja en coordenadas «lógicas» (el local siempre ataca hacia x=100). Al cambiar de campo
+       (descanso, inicio de la prórroga y su descanso) solo cambia cómo se dibuja: la vista gira 180°. En ese instante
+       el estado lógico se refleja también, de modo que en pantalla nadie se mueve de golpe: los jugadores caminan
+       hacia su nueva mitad. Banquillos, entrenadores y asistencias están fuera del campo, en la banda de abajo, y no
+       giran (los banquillos no cambian de sitio en el descanso). */
+    var ends = { flipped: false, period: 1, labels: null, bannerEl: null };
+    var offLayer = null, benchLayer = null, staffLayer = null;
+    var leavers = {};                     // jugadores que salen del campo (cambio o expulsión)
+    var benchOut = { home: [], away: [] }; // sustituidos que ya se han sentado en el banquillo
+    var scenes = [];                      // escenas en curso (lesión con asistencias y camilla)
+    var managers = { home: null, away: null };
+    var benchSig = '';
+    var BENCH = { home: { x: 30, y: 103.1 }, away: { x: 70, y: 103.1 } };
+    var MANAGER_SPOT = { home: { x: 42.5, y: 102.2 }, away: { x: 57.5, y: 102.2 } };
+
+    function visOf(x, y) { return ends.flipped ? { x: 100 - x, y: 100 - y } : { x: x, y: y }; }
+    function logOf(x, y) { return visOf(x, y); }           // la simetría es su propia inversa
+    function toView(x, y) { var v = visOf(x, y); return toSvg(v.x, v.y); }
+
+    function periodOf(play) {
+        if (!play) return 1;
+        if (play.kind === 'shootout' || play.kind === 'shootout-kick') return ends.period;
+        var m = parseInt(String(play.minute || '').split('+')[0], 10);
+        if (isNaN(m)) return ends.period;
+        if (m <= 45) return 1;
+        if (m <= 90) return 2;
+        if (m <= 105) return 3;
+        return 4;
+    }
+
+    function mirrorObj(o) {
+        if (!o) return;
+        if (o.x != null) { o.x = 100 - o.x; o.y = 100 - o.y; }
+        if (o.tx != null) { o.tx = 100 - o.tx; o.ty = 100 - o.ty; }
+        if (o.hx != null) { o.hx = 100 - o.hx; o.hy = 100 - o.hy; }
+        if (o.vx != null) { o.vx = -o.vx; o.vy = -o.vy; }
+        if (o.pend) { o.pend.tx = 100 - o.pend.tx; o.pend.ty = 100 - o.pend.ty; }
+    }
+
+    function setEnds(period, immediate) {
+        var flip = period % 2 === 0;
+        var changed = flip !== ends.flipped;
+        ends.period = period;
+        if (!changed) return;
+        if (!immediate) {
+            Object.keys(playerState).forEach(function (k) { mirrorObj(playerState[k]); });
+            Object.keys(leavers).forEach(function (k) { mirrorObj(leavers[k]); });
+            mirrorObj(refState);
+            ball.x = 100 - ball.x; ball.y = 100 - ball.y;
+            if (ball.fl) { mirrorObj(ball.fl.from); mirrorObj(ball.fl.to); }
+        }
+        ends.flipped = flip;
+        if (ends.labels) {
+            ends.labels[0].textContent = flip ? 'Visitante' : 'Local';
+            ends.labels[1].textContent = flip ? 'Local' : 'Visitante';
+        }
+        if (!immediate) showBanner(period === 3 ? 'Prórroga · cambio de campo' : 'Cambio de campo');
+    }
+
+    function showBanner(text) {
+        if (!offLayer) return;
+        if (ends.bannerEl && ends.bannerEl.parentNode) ends.bannerEl.parentNode.removeChild(ends.bannerEl);
+        var p = toSvg(50, 8);
+        var g = svgEl('g', { 'class': 'campo-banner', transform: 'translate(' + p.x + ',' + p.y + ')' });
+        g.appendChild(svgEl('rect', { x: -120, y: -17, width: 240, height: 30, rx: 15, fill: 'rgba(10,20,15,0.78)', stroke: 'rgba(255,255,255,0.5)', 'stroke-width': 1.5 }));
+        var t = svgEl('text', { x: 0, y: 4, 'text-anchor': 'middle', fill: '#fff', 'font-size': 15, 'font-weight': 700, 'font-family': 'Segoe UI, sans-serif' });
+        t.textContent = text;
+        g.appendChild(t);
+        offLayer.appendChild(g);
+        ends.bannerEl = g;
+        setTimeout(function () { if (g.parentNode) g.parentNode.removeChild(g); }, 3200);
+    }
+
+    /* ---- Banquillos ---- */
+    function teamColorsOf(side, d) {
+        return (side === 'home' ? d.homeColors : d.awayColors) || { primary: '#333', secondary: '#fff' };
+    }
+
+    function benchNames(side, d) {
+        var subs = ((side === 'home' ? d.homeSubs : d.awaySubs) || []).map(function (p) { return p.name; });
+        var onPitch = {};
+        Object.keys(playerState).forEach(function (k) { onPitch[k] = true; });
+        var list = subs.filter(function (n) { return !onPitch[keyOf(side, n)] && !leavers[keyOf(side, n)]; });
+        benchOut[side].forEach(function (n) { if (list.indexOf(n) === -1 && !onPitch[keyOf(side, n)]) list.push(n); });
+        return list;
+    }
+
+    function drawBenches(d) {
+        if (!benchLayer || !d) return;
+        var data = ['home', 'away'].map(function (side) { return { side: side, names: benchNames(side, d) }; });
+        var sig = JSON.stringify(data) + nodeScale.toFixed(2) + (teamColorsOf('home', d).primary) + (teamColorsOf('away', d).primary);
+        if (sig === benchSig) return;
+        benchSig = sig;
+        benchLayer.innerHTML = '';
+        var k = 1 + (nodeScale - 1) * 0.6;
+        data.forEach(function (b) {
+            var c = toSvg(BENCH[b.side].x, BENCH[b.side].y);
+            var n = Math.max(5, b.names.length);
+            var step = 21 * k;
+            var w = n * step + 12;
+            var g = svgEl('g', { 'class': 'campo-bench', 'data-side': b.side });
+            g.appendChild(svgEl('rect', { x: c.x - w / 2, y: c.y - 12 * k, width: w, height: 24 * k, rx: 6, fill: 'rgba(0,0,0,0.38)', stroke: 'rgba(255,255,255,0.35)', 'stroke-width': 1 }));
+            var kit = kitStyle(teamColorsOf(b.side, d));
+            b.names.forEach(function (name, i) {
+                var x = c.x - (b.names.length - 1) * step / 2 + i * step;
+                var out = benchOut[b.side].indexOf(name) !== -1;
+                var dot = svgEl('g', { 'class': 'campo-bench-player' + (out ? ' is-out' : ''), transform: 'translate(' + x.toFixed(1) + ',' + c.y.toFixed(1) + ') scale(' + k.toFixed(3) + ')', opacity: out ? 0.55 : 1 });
+                var title = svgEl('title', {});
+                title.textContent = name + (out ? ' (sustituido)' : ' (suplente)');
+                dot.appendChild(title);
+                dot.appendChild(svgEl('circle', { r: 8.5, fill: kit.fill, stroke: kit.ring, 'stroke-width': 2 }));
+                var t = svgEl('text', { y: 3.6, 'text-anchor': 'middle', 'font-size': 9.5, 'font-weight': 700, fill: kit.ink, 'font-family': 'Segoe UI, sans-serif' });
+                t.textContent = String(assignNumber(b.side, name));
+                dot.appendChild(t);
+                g.appendChild(dot);
+            });
+            benchLayer.appendChild(g);
         });
     }
 
-    function startPhase(phase, immediate) {
-        if (!phase) return;
-        var from = {};
-        Object.keys(playerState).forEach(function (k) {
-            from[k] = { x: playerState[k].x, y: playerState[k].y };
-        });
-        anim.fromPlayers = from;
-        anim.toPlayers = phase.players || {};
-        anim.fromRef = { x: refState.x, y: refState.y };
-        anim.toRef = phase.ref || { x: refState.x, y: refState.y };
-        var path = (phase.ballPath && phase.ballPath.length) ? phase.ballPath.slice() : [{ x: ball.x, y: ball.y }];
-        if (!immediate) path.unshift({ x: ball.x, y: ball.y });
-        anim.ballPath = path;
-        anim.ms = immediate ? 1 : Math.max(180, phase.ms || 700);
-        anim.start = performance.now();
-        anim.running = true;
-        if (phase.highlight) highlightPlayers(phase.highlight);
-        // La etiqueta «Saque de centro» solo se ve mientras dura esa fase.
-        if (ui.caption) ui.caption.classList.toggle('kickoff-on', !!phase.kickoff);
-        if (immediate) {
-            finishPhase();
-            return;
-        }
-        if (anim.raf) cancelAnimationFrame(anim.raf);
-        anim.raf = requestAnimationFrame(tickAnim);
+    function benchSpotLogical(side) {
+        var b = BENCH[side];
+        return logOf(b.x + (side === 'home' ? 6 : -6), 101.5);
     }
 
-    function finishPhase() {
-        applyPlayerTargets(anim.toPlayers, 1);
-        if (anim.toRef) {
-            refState.x = anim.toRef.x;
-            refState.y = anim.toRef.y;
-            placeRefEl();
-        }
-        if (anim.ballPath.length) {
-            var end = anim.ballPath[anim.ballPath.length - 1];
-            ball = { x: end.x, y: end.y };
-            placeBall();
-        }
-        if (anim.queue.length) {
-            startPhase(anim.queue.shift(), false);
-        } else {
-            anim.running = false;
-        }
-    }
-
-    function tickAnim(now) {
-        var t = (now - anim.start) / anim.ms;
-        if (t >= 1) {
-            finishPhase();
-            return;
-        }
-        var e = easeInOutCubic(t);
-        applyPlayerTargets(anim.toPlayers, e);
-        if (anim.toRef) {
-            var fr = anim.fromRef || { x: refState.x, y: refState.y };
-            refState.x = lerp(fr.x, anim.toRef.x, e);
-            refState.y = lerp(fr.y, anim.toRef.y, e);
-            placeRefEl();
-        }
-        var bp = posOnPath(anim.ballPath, e);
-        ball = { x: bp.x, y: bp.y };
-        placeBall();
-        anim.raf = requestAnimationFrame(tickAnim);
-    }
-
-    function playResolved(play, d, immediate) {
-        var resolved = resolvePlay(play, d);
-        var phases = resolved.phases || [];
-        if (!phases.length) return;
-        if (anim.raf) cancelAnimationFrame(anim.raf);
-        anim.queue = [];
-        if (immediate) {
-            // Saltar a la pose característica (celebración, no la vuelta al centro).
-            var pose = null;
-            for (var pi = phases.length - 1; pi >= 0; pi--) {
-                if (phases[pi].pose !== false) { pose = phases[pi]; break; }
+    /* ---- Salidas (cambio o expulsión) y entradas ---- */
+    function startLeaving(k, st, why, force) {
+        var target;
+        if (!force) {
+            // Si las asistencias lo están atendiendo, primero se lo llevan en camilla; luego va al banquillo.
+            var sc = scenes.filter(function (x) { return x.key === k && x.stage < 4; })[0];
+            if (sc) {
+                sc.subbed = why;
+                delete playerState[k];
+                if (ball.owner === k) { ball.state = 'free'; ball.owner = null; }
+                return;
             }
-            startPhase(pose || phases[phases.length - 1], true);
+        }
+        if (why === 'red') target = logOf(50, 106);          // vestuarios: túnel en el centro de la banda
+        else target = benchSpotLogical(st.side);
+        st.leaving = why;
+        st.pend = null;
+        st.tx = target.x; st.ty = target.y; st.hx = null;
+        st.spd = why === 'red' ? 1.5 : 3;                      // el expulsado se va andando; el cambiado, al trote
+        st.leaveT = 0;
+        if (st.el) {
+            st.el.setAttribute('data-leaving', why);
+            st.el.classList.add('campo-leaving');
+            if (why === 'red') st.el.classList.add('campo-sent-off');
+        }
+        leavers[k] = st;
+        delete playerState[k];
+        if (ball.owner === k) { ball.state = 'free'; ball.owner = null; }
+    }
+
+    function stepLeavers(dt, tp) {
+        Object.keys(leavers).forEach(function (k) {
+            var st = leavers[k];
+            st.leaveT += dt;
+            var d = stepMover(st, dt, Math.min(tp, 2.5));
+            var v = visOf(st.x, st.y);
+            if (st.el && v.y > 100.5) st.el.style.opacity = String(clamp(1 - (v.y - 100.5) / 5, 0, 1).toFixed(2));
+            placePlayerEl(st);
+            if (d < 0.6 || st.leaveT > 25) finishLeaving(k);
+        });
+    }
+
+    function finishLeaving(k) {
+        var st = leavers[k];
+        if (!st) return;
+        if (st.el && st.el.parentNode) st.el.parentNode.removeChild(st.el);
+        if (st.leaving === 'sub' && benchOut[st.side].indexOf(st.name) === -1) benchOut[st.side].push(st.name);
+        delete leavers[k];
+        benchSig = '';
+        var d = data();
+        if (d) drawBenches(d);
+    }
+
+    function clearLeavers() {
+        Object.keys(leavers).forEach(function (k) {
+            var st = leavers[k];
+            if (st.el && st.el.parentNode) st.el.parentNode.removeChild(st.el);
+            if (st.leaving === 'sub' && benchOut[st.side].indexOf(st.name) === -1) benchOut[st.side].push(st.name);
+        });
+        leavers = {};
+        benchSig = '';
+    }
+
+    function leaveReason(st, play, d) {
+        if (d && (d.redCarded || []).indexOf(st.name) !== -1) return 'red';
+        var t = String((play && play.text) || '').toLowerCase();
+        var last = String(st.name || '').toLowerCase().split(' ').pop();
+        if (/tarjeta roja|cartulina roja|ve la roja|la roja|expulsad|segunda amarilla|se marcha/.test(t) && (!last || t.indexOf(last) !== -1 || (play && play.kind === 'red'))) return 'red';
+        return 'sub';
+    }
+
+    /* ---- Lesión: asistencias y camilla ---- */
+    function injuredKey(play) {
+        var text = String((play && play.text) || '');
+        var m = text.match(/([^\n.:;!¡]+?)\s+(?:cae lesionado|se duele|se ha lesionado|está lesionado)/i);
+        var cand = m ? m[1].trim().toLowerCase() : '';
+        var best = null;
+        Object.keys(playerState).forEach(function (k) {
+            var n = String(playerState[k].name || '').toLowerCase();
+            if (!n) return;
+            var last = n.split(' ').pop();
+            if (cand && (cand.indexOf(n) !== -1 || (last.length > 2 && cand.indexOf(last) !== -1))) best = best || k;
+        });
+        if (!best && play && play.players) {
+            play.players.forEach(function (name) {
+                Object.keys(playerState).forEach(function (k) { if (!best && playerState[k].name === name) best = k; });
+            });
+        }
+        return best;
+    }
+
+    function staffNode(kind) {
+        var g = svgEl('g', { 'class': 'campo-staff campo-' + kind });
+        if (kind === 'medic') {
+            g.appendChild(svgEl('circle', { r: 9, fill: '#ffffff', stroke: '#b91c1c', 'stroke-width': 2 }));
+            g.appendChild(svgEl('rect', { x: -1.8, y: -5.5, width: 3.6, height: 11, fill: '#dc2626' }));
+            g.appendChild(svgEl('rect', { x: -5.5, y: -1.8, width: 11, height: 3.6, fill: '#dc2626' }));
+        } else if (kind === 'stretcher') {
+            g.appendChild(svgEl('rect', { x: -22, y: -8, width: 44, height: 16, rx: 4, fill: 'rgba(255,255,255,0.92)', stroke: '#7f1d1d', 'stroke-width': 1.5 }));
+            g.appendChild(svgEl('line', { x1: -27, y1: -6, x2: 27, y2: -6, stroke: '#4b5563', 'stroke-width': 2 }));
+            g.appendChild(svgEl('line', { x1: -27, y1: 6, x2: 27, y2: 6, stroke: '#4b5563', 'stroke-width': 2 }));
+        }
+        return g;
+    }
+
+    function placeStaff(o) {
+        var p = toSvg(o.x, o.y);
+        var k = 1 + (nodeScale - 1) * 0.7;
+        o.el.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ',' + p.y.toFixed(1) + ')' + (o.rot ? ' rotate(' + o.rot + ')' : '') + ' scale(' + k.toFixed(3) + ')');
+    }
+
+    function startInjury(play, d) {
+        var k = injuredKey(play);
+        if (!k || !staffLayer) return;
+        if (scenes.some(function (s) { return s.key === k; })) return;
+        var st = playerState[k];
+        var text = String(play.text || '').toLowerCase();
+        var w = text.match(/lesi[oó]n de (\d+) semana/);
+        var serious = /camilla|no puede seguir|grave|retirado/.test(text) || (w ? parseInt(w[1], 10) >= 2 : /cae lesionado/.test(text));
+        st.hold = true;
+        st.pend = null;
+        st.tx = st.x; st.ty = st.y;
+        if (st.el) st.el.classList.add('campo-down');
+        var v = visOf(st.x, st.y);
+        var bench = BENCH[st.side];
+        var medics = [-1, 1].map(function (s) {
+            var o = { x: bench.x + s * 2, y: 102.2, vx: 0, vy: 0, spd: 5.5, el: staffNode('medic') };
+            o.tx = o.x; o.ty = o.y;
+            staffLayer.appendChild(o.el);
+            placeStaff(o);
+            return o;
+        });
+        scenes.push({ type: 'injury', key: k, st: st, serious: serious, stage: 0, t: 0, medics: medics, stretcher: null, side: st.side });
+    }
+
+    function stepScenes(dt, tp) {
+        var tq = Math.min(tp, 3);
+        scenes = scenes.filter(function (sc) {
+            sc.t += dt;
+            var st = sc.st;
+            var alive = playerState[sc.key] === st || !!sc.subbed;
+            if (!alive && sc.stage < 4) sc.stage = 4;
+            var v = visOf(st.x, st.y);
+            if (sc.stage === 0 && sc.t > 0.6 / tq) {
+                // Las asistencias salen corriendo desde su banquillo hacia el jugador.
+                sc.medics.forEach(function (m, i) { m.tx = clamp(v.x + (i ? 1.6 : -1.6), 1, 99); m.ty = clamp(v.y + 1.2, 1, 99); m.spd = 5.5; });
+                sc.stage = 1; sc.t = 0;
+            } else if (sc.stage === 1) {
+                var arrived = sc.medics.every(function (m) { return mDist(m.x, m.y, m.tx, m.ty) < 0.7; });
+                if (arrived || sc.t > 9 / tq) { sc.stage = 2; sc.t = 0; }
+            } else if (sc.stage === 2 && sc.t > 1.8 / tq) {
+                if (sc.serious) {
+                    // Camilla: se lo llevan hasta la banda, despacio.
+                    sc.stretcher = { x: v.x, y: v.y, vx: 0, vy: 0, el: staffNode('stretcher') };
+                    staffLayer.insertBefore(sc.stretcher.el, staffLayer.firstChild);
+                    var exitX = clamp(v.x, 8, 92);
+                    sc.exit = { x: exitX, y: 101.6 };
+                    sc.stage = 3; sc.t = 0;
+                    if (st.el) st.el.classList.add('campo-on-stretcher');
+                } else {
+                    sc.stage = 4; sc.t = 0;
+                    st.hold = false;
+                    if (st.hx != null) { st.tx = st.hx; st.ty = st.hy; st.spd = 2.5; }
+                    if (st.el) st.el.classList.remove('campo-down');
+                }
+            } else if (sc.stage === 3) {
+                var sp = 1.8 * tq * dt;
+                var dx = (sc.exit.x - v.x) * M_X, dy = (sc.exit.y - v.y) * M_Y, dd = Math.hypot(dx, dy);
+                if (dd > 0.2) {
+                    var nx = v.x + dx / dd * Math.min(sp, dd) / M_X, ny = v.y + dy / dd * Math.min(sp, dd) / M_Y;
+                    var lg = logOf(nx, ny);
+                    st.x = lg.x; st.y = lg.y; st.tx = lg.x; st.ty = lg.y; st.vx = 0; st.vy = 0;
+                    v = { x: nx, y: ny };
+                }
+                placePlayerEl(st);
+                sc.stretcher.x = v.x; sc.stretcher.y = v.y;
+                sc.medics[0].x = sc.medics[0].tx = v.x - 3.2; sc.medics[0].y = sc.medics[0].ty = v.y;
+                sc.medics[1].x = sc.medics[1].tx = v.x + 3.2; sc.medics[1].y = sc.medics[1].ty = v.y;
+                if (dd <= 0.2 || sc.t > 30) {
+                    sc.stage = 4; sc.t = 0;
+                    // Fuera del campo: si no lo sustituyen, vuelve cuando el árbitro lo autoriza.
+                    sc.returnAt = 6 / tq;
+                }
+            } else if (sc.stage === 4) {
+                if (sc.stretcher && sc.stretcher.el) { sc.stretcher.el.remove(); sc.stretcher = null; }
+                if (sc.subbed) {
+                    st.hold = false;
+                    if (st.el) st.el.classList.remove('campo-down');
+                    startLeaving(sc.key, st, sc.subbed, true);
+                    sc.returnAt = 0; sc.subbed = null;
+                }
+                sc.medics.forEach(function (m) { var b = BENCH[sc.side]; m.tx = b.x; m.ty = 102.4; m.spd = 3; });
+                if (st.el) st.el.classList.remove('campo-on-stretcher');
+                sc.stage = 5; sc.t = 0;
+            } else if (sc.stage === 5) {
+                if (sc.returnAt && sc.t > sc.returnAt && playerState[sc.key] === st) {
+                    st.hold = false;
+                    if (st.hx != null) { st.tx = st.hx; st.ty = st.hy; st.spd = 3; }
+                    if (st.el) st.el.classList.remove('campo-down');
+                    sc.returnAt = 0;
+                }
+                var home = sc.medics.every(function (m) { return mDist(m.x, m.y, m.tx, m.ty) < 0.8; });
+                if (home && !sc.returnAt) {
+                    sc.medics.forEach(function (m) { if (m.el) m.el.remove(); });
+                    if (playerState[sc.key] === st && st.hold && !sc.serious) st.hold = false;
+                    return false;
+                }
+            }
+            sc.medics.forEach(function (m) { if (sc.stage !== 3) stepMover(m, dt, tq); placeStaff(m); });
+            if (sc.stretcher) placeStaff(sc.stretcher);
+            return true;
+        });
+    }
+
+    function clearScenes() {
+        scenes.forEach(function (sc) {
+            sc.medics.forEach(function (m) { if (m.el) m.el.remove(); });
+            if (sc.stretcher && sc.stretcher.el) sc.stretcher.el.remove();
+            if (sc.st) { sc.st.hold = false; if (sc.st.el) sc.st.el.classList.remove('campo-down', 'campo-on-stretcher'); }
+        });
+        scenes = [];
+    }
+
+    /* ---- Entrenadores en la banda ---- */
+    function buildManager(side, d) {
+        var kit = kitStyle(teamColorsOf(side, d));
+        var g = svgEl('g', { 'class': 'campo-manager', 'data-side': side });
+        var title = svgEl('title', {});
+        title.textContent = 'Entrenador de ' + ((side === 'home' ? d.homeTeam : d.awayTeam) || '');
+        g.appendChild(title);
+        var body = svgEl('g', { 'class': 'campo-manager-body' });
+        body.appendChild(svgEl('circle', { r: 10.5, fill: '#1f2937', stroke: kit.fill, 'stroke-width': 3 }));
+        var t = svgEl('text', { y: 3.8, 'text-anchor': 'middle', 'font-size': 9.5, 'font-weight': 800, fill: '#fff', 'font-family': 'Segoe UI, sans-serif' });
+        t.textContent = 'DT';
+        body.appendChild(t);
+        g.appendChild(body);
+        var bubble = svgEl('g', { 'class': 'campo-bubble', opacity: 0 });
+        bubble.appendChild(svgEl('rect', { x: -34, y: -40, width: 68, height: 20, rx: 10, fill: '#fff', stroke: 'rgba(0,0,0,0.5)', 'stroke-width': 1 }));
+        bubble.appendChild(svgEl('path', { d: 'M -4 -20.5 L 0 -14 L 4 -20.5 Z', fill: '#fff' }));
+        var bt = svgEl('text', { y: -26, 'text-anchor': 'middle', 'font-size': 11.5, 'font-weight': 700, fill: '#111', 'font-family': 'Segoe UI, sans-serif' });
+        bubble.appendChild(bt);
+        g.appendChild(bubble);
+        staffLayer.appendChild(g);
+        var s = MANAGER_SPOT[side];
+        return { side: side, x: s.x, y: s.y, tx: s.x, ty: s.y, vx: 0, vy: 0, spd: 1.2, el: g, body: body, bubble: bubble, bubbleText: bt, mood: null, moodT: 0, moodDur: 0, idleAt: 0 };
+    }
+
+    function ensureManagers(d) {
+        if (!staffLayer || !d || !d.homeTeam) return;
+        ['home', 'away'].forEach(function (side) {
+            if (!managers[side] || !managers[side].el.parentNode) managers[side] = buildManager(side, d);
+        });
+    }
+
+    var MOODS = {
+        celebrate: { text: '¡Gooool!', dur: 3.2 },
+        despair: { text: '¡No!', dur: 2.6 },
+        protest: { text: '¡Árbitro!', dur: 2.8 },
+        applaud: { text: '¡Bien!', dur: 2.4 },
+        instruct: { text: '¡Arriba!', dur: 2.8 },
+        argue: { text: '¡Eh!', dur: 2.6 },
+        nervous: { text: '¡Vamos!', dur: 2.6 }
+    };
+
+    function setMood(side, mood) {
+        var m = managers[side];
+        if (!m || !MOODS[mood]) return;
+        m.mood = mood; m.moodT = 0; m.moodDur = MOODS[mood].dur;
+        m.bubbleText.textContent = MOODS[mood].text;
+        var s = MANAGER_SPOT[side];
+        // Al protestar, dar instrucciones o celebrar se va hasta la línea; si no, se queda en su zona.
+        if (mood === 'protest' || mood === 'instruct' || mood === 'argue' || mood === 'celebrate') { m.tx = s.x + (side === 'home' ? 2.5 : -2.5); m.ty = 100.9; m.spd = mood === 'celebrate' ? 4 : 2.6; }
+        else if (mood === 'despair') { m.tx = s.x; m.ty = s.y + 0.6; m.spd = 1.2; }
+        else { m.tx = s.x; m.ty = s.y; m.spd = 1.6; }
+    }
+
+    function sideMentioned(text, d) {
+        var t = foldText(text);
+        var h = d.homeTeam ? foldText(d.homeTeam) : '', a = d.awayTeam ? foldText(d.awayTeam) : '';
+        var hi = h ? t.indexOf(h.split(' ')[0]) : -1, ai = a ? t.indexOf(a.split(' ')[0]) : -1;
+        if (hi >= 0 && (ai < 0 || hi < ai)) return 'home';
+        if (ai >= 0) return 'away';
+        return null;
+    }
+
+    function foldText(s) {
+        return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    }
+
+    function managerReact(play, d) {
+        if (!play || !managers.home) return;
+        var t = foldText(play.text);
+        var side = sideOfTeam(play.team, d);
+        var other = side === 'home' ? 'away' : side === 'away' ? 'home' : null;
+        var named = sideMentioned(play.text, d) || side;
+        if (play.kind === 'goal' || play.kind === 'own-goal') {
+            var scorer = play.kind === 'own-goal' ? other : side;
+            if (scorer) { setMood(scorer, 'celebrate'); setMood(scorer === 'home' ? 'away' : 'home', 'despair'); }
             return;
         }
-        var first = phases.shift();
-        anim.queue = phases;
-        startPhase(first, false);
+        if (/celebra con el cuerpo tecnico|dedica el gol al banquillo|abrazo con el banquillo/.test(t) && side) { setMood(side, 'celebrate'); return; }
+        if (/entrenador .{0,40}aplaude|aplaude desde la banda/.test(t) && named) { setMood(named, 'applaud'); return; }
+        if ((/(entrenador|tecnico|mister).{0,60}(pide|exige|ordena|grita|instrucciones|mas metros|presion)/.test(t) || /empuja desde la banda|presion tras el gol/.test(t)) && named) { setMood(named, 'instruct'); return; }
+        if (/discute con .{0,40}banquillo|protesta|se encara/.test(t) && side) { setMood(side, 'argue'); return; }
+        if (/nervios .{0,30}banquillos/.test(t)) { setMood('home', 'nervous'); setMood('away', 'nervous'); return; }
+        if (play.kind === 'red' || play.kind === 'yellow' || play.kind === 'penalty') {
+            // Protesta el banquillo del que recibe la tarjeta o el penalti en contra.
+            var victim = play.kind === 'penalty' ? other : side;
+            if (victim) setMood(victim, 'protest');
+            return;
+        }
+        if (play.kind === 'sub' && named) setMood(named, 'instruct');
+    }
+
+    function stepManagers(dt, now) {
+        ['home', 'away'].forEach(function (side) {
+            var m = managers[side];
+            if (!m) return;
+            var s = MANAGER_SPOT[side];
+            if (m.mood) {
+                m.moodT += dt;
+                if (m.moodT > m.moodDur) { m.mood = null; m.tx = s.x; m.ty = s.y; m.spd = 1.3; }
+            } else if (now > m.idleAt) {
+                // Paseo por su área técnica.
+                m.tx = s.x + (Math.random() - 0.5) * 4; m.ty = s.y + (Math.random() - 0.3) * 0.8; m.spd = 0.9 + Math.random() * 0.5;
+                m.idleAt = now + 2200 + Math.random() * 3000;
+            }
+            stepMover(m, dt, 1);
+            var p = toSvg(m.x, m.y);
+            var k = 1 + (nodeScale - 1) * 0.7;
+            var bob = 0, rot = 0;
+            if (m.mood === 'celebrate') bob = -Math.abs(Math.sin(m.moodT * 9)) * 7;
+            else if (m.mood === 'protest' || m.mood === 'argue') rot = Math.sin(m.moodT * 16) * 12;
+            else if (m.mood === 'despair') rot = Math.sin(m.moodT * 3) * 8;
+            else if (m.mood === 'applaud' || m.mood === 'nervous') bob = -Math.abs(Math.sin(m.moodT * 7)) * 2.5;
+            m.el.setAttribute('transform', 'translate(' + p.x.toFixed(1) + ',' + (p.y + bob).toFixed(1) + ') scale(' + k.toFixed(3) + ')');
+            m.body.setAttribute('transform', rot ? 'rotate(' + rot.toFixed(1) + ')' : '');
+            var op = m.mood ? Math.min(1, m.moodT * 5, (m.moodDur - m.moodT) * 3) : 0;
+            m.bubble.setAttribute('opacity', Math.max(0, op).toFixed(2));
+        });
+    }
+
+    function resetStaff() {
+        clearScenes();
+        clearLeavers();
+        ['home', 'away'].forEach(function (side) {
+            var m = managers[side];
+            if (m) { m.mood = null; m.bubble.setAttribute('opacity', '0'); }
+        });
+    }
+
+    // Eventos de una jugada en directo: lesión, reacción del entrenador.
+    function playEvents(play, d) {
+        if (!play) return;
+        if (play.kind === 'injury' || /cae lesionado|camilla/i.test(play.text || '')) startInjury(play, d);
+        managerReact(play, d);
     }
 
     /* ---------------- UI ---------------- */
@@ -2259,7 +3057,7 @@
         var minEl = $('minute');
         if (narrEl) narrEl.textContent = summarize(play.text);
         if (minEl) minEl.textContent = label;
-        renderPlayers(d, play);
+        renderPlayers(d, play, false);
         playResolved(play, d, immediate);
     }
 
@@ -2287,6 +3085,7 @@
         if (!play) return;
         lastPlayIndex = play.i;
         if (typeof window.seekSimulationTo !== 'function') return;
+        keepViewOnReset = true;
         if (play.kind === 'shootout' || play.kind === 'shootout-kick') {
             window.seekSimulationTo('tanda', null, play.endLine);
         } else {
@@ -2358,8 +3157,9 @@
         });
     }
 
-    function renderPlayers(d, play) {
+    function renderPlayers(d, play, animate) {
         if (!playersLayer) return;
+        var hadPlayers = Object.keys(playerState).length > 0;
         ensureRosterNumbers(d);
         var lineups = effectiveLineups(d, play);
         var layouts = layoutTeam(lineups.home, 'home').concat(layoutTeam(lineups.away, 'away'));
@@ -2374,7 +3174,16 @@
             live[k] = true;
             var st = playerState[k];
             if (!st) {
-                st = { name: p.name, side: p.side, pos: p.pos, baseX: p.x, baseY: p.y, x: p.x, y: p.y, el: null };
+                st = { name: p.name, side: p.side, pos: p.pos, baseX: p.x, baseY: p.y, x: p.x, y: p.y, vx: 0, vy: 0, tx: p.x, ty: p.y, el: null };
+                if (leavers[k]) { st = leavers[k]; delete leavers[k]; st.leaving = null; if (st.el) { st.el.removeAttribute('data-leaving'); st.el.classList.remove('campo-leaving', 'campo-sent-off'); st.el.style.opacity = ''; } }
+                else if (animate && hadPlayers) {
+                    // Entra desde su banquillo, trotando hasta su sitio (nada de aparecer de golpe).
+                    var sp = benchSpotLogical(p.side);
+                    st.x = sp.x; st.y = sp.y; st.spd = 4; st.hx = p.x; st.hy = p.y;
+                    st.idleAt = performance.now() + 4000;
+                    var bi = benchOut[p.side].indexOf(p.name);
+                    if (bi !== -1) benchOut[p.side].splice(bi, 1);
+                }
                 playerState[k] = st;
             } else {
                 st.pos = p.pos;
@@ -2390,16 +3199,21 @@
         });
         Object.keys(playerState).forEach(function (k) {
             if (!live[k]) {
+                // En directo: el sustituido se va andando a su banquillo y el expulsado, a vestuarios.
+                if (animate && hadPlayers && playerState[k].el) { startLeaving(k, playerState[k], leaveReason(playerState[k], play, d)); return; }
                 if (playerState[k].el && playerState[k].el.parentNode) playerState[k].el.parentNode.removeChild(playerState[k].el);
                 delete playerState[k];
             }
         });
+        if (!animate) clearLeavers();
         if (rebuild) {
             Array.prototype.forEach.call(playersLayer.querySelectorAll('.campo-player'), function (g) {
                 var k = g.getAttribute('data-side') + ':' + g.getAttribute('data-name');
-                if (!live[k]) playersLayer.removeChild(g);
+                if (!live[k] && !leavers[k] && !scenes.some(function (sc) { return sc.key === k && sc.subbed; })) playersLayer.removeChild(g);
             });
         }
+        drawBenches(d);
+        ensureManagers(d);
         ensureRef(d);
         applyCompactNames();
     }
@@ -2496,7 +3310,7 @@
         var secondary = kit.ring;
         var ink = kit.ink;
         var num = assignNumber(p.side, p.name);
-        var pos = toSvg(st.x, st.y);
+        var pos = toView(st.x, st.y);
         var g = svgEl('g', {
             'class': 'campo-player',
             'data-name': p.name,
@@ -2657,13 +3471,19 @@
             ensureUI();
         }
         if (dragging) return;
+        // Durante un salto del deslizador la narración avanza a toda velocidad hasta la jugada elegida:
+        // el campo ya muestra esa jugada (colocada al soltar), así que no se anima el avance rápido.
+        if (d.seeking) return;
+        keepViewOnReset = false;
         var play = currentPlay(d);
-        renderPlayers(d, play);
+        renderPlayers(d, play, lastPlayIndex >= 0 && !!d.started);
         updateChrome(d, play);
         setCaption(play, d);
         if (play && play.i !== lastPlayIndex) {
             // -2 = estábamos en el saque inicial: la primera jugada se anima (con su saque de centro).
-            var jump = lastPlayIndex === -1 || (lastPlayIndex >= 0 && Math.abs(play.i - lastPlayIndex) > 3) || (lastPlayIndex === -2 && play.i > 3);
+            // En directo nunca se salta: todo fluye desde donde está. Solo se coloca al instante
+            // al cargar el partido o si se reanuda muy lejos (p. ej. tras «Ir al final»).
+            var jump = lastPlayIndex === -1 || (d.finished && Math.abs(play.i - lastPlayIndex) > 3) || (lastPlayIndex === -2 && play.i > 3);
             playResolved(play, d, jump);
             lastPlayIndex = play.i;
         } else if (!play && lastPlayIndex !== -2) {
@@ -2673,6 +3493,12 @@
     }
 
     function resetView() {
+        if (keepViewOnReset) {
+            // Reinicio provocado por el deslizador (salto a una jugada): el campo ya muestra esa jugada,
+            // así que se conserva todo para que no parpadee ni salte al terminar el avance rápido.
+            keepViewOnReset = false;
+            return;
+        }
         lastSignature = '';
         lastPlayIndex = -1;
         lastPlaysSource = '';
@@ -2681,10 +3507,16 @@
         playerState = {};
         if (refState.el && refState.el.parentNode) refState.el.parentNode.removeChild(refState.el);
         refState = { x: 53, y: 62, el: null, name: '' };
-        if (anim.raf) cancelAnimationFrame(anim.raf);
-        anim.running = false;
-        anim.queue = [];
-        ball = { x: 50, y: 50 };
+        motor.phases = []; motor.phase = null; motor.actions = []; motor.action = null;
+        ball = { x: 50, y: 50, h: 0, state: 'free', owner: null };
+        resetStaff();
+        leavers = {};
+        benchOut = { home: [], away: [] };
+        benchSig = '';
+        if (benchLayer) benchLayer.innerHTML = '';
+        if (staffLayer) staffLayer.innerHTML = '';
+        managers = { home: null, away: null };
+        setEnds(1, true);
         if (playersLayer) playersLayer.innerHTML = '';
         if (built) placeBall();
     }
@@ -2734,8 +3566,6 @@
             setCaption(play, d);
             var r = resolvePlay(play, d);
             var ph = (r.phases || [])[k == null ? 0 : k];
-            if (anim.raf) cancelAnimationFrame(anim.raf);
-            anim.queue = [];
             if (ph) startPhase(ph, true);
             if (ph && ph.highlight) highlightPlayers(ph.highlight);
             return !!ph;
@@ -2748,6 +3578,24 @@
             return (r.phases || []).map(function (ph) {
                 return { ms: ph.ms, pose: ph.pose, kickoff: !!ph.kickoff, ball: ph.ballPath, players: ph.players, ref: ph.ref };
             });
+        },
+        debugStaff: function () {
+            return { flipped: ends.flipped, period: ends.period, leavers: Object.keys(leavers).map(function (k) { return k + ':' + leavers[k].leaving; }),
+                scenes: scenes.map(function (sc) { return sc.key + ':' + sc.stage + (sc.serious ? ':grave' : ''); }),
+                moods: { home: managers.home && managers.home.mood, away: managers.away && managers.away.mood },
+                bench: { home: benchNames('home', data() || {}), away: benchNames('away', data() || {}) }, benchOut: benchOut,
+                held: Object.keys(playerState).filter(function (k) { return playerState[k].hold; }) };
+        },
+        debugMotor: function () {
+            var lag = 0, n = 0;
+            Object.keys(playerState).forEach(function (k) {
+                var st = playerState[k];
+                if (st.hx == null) return;
+                lag += mDist(st.x, st.y, st.hx, st.hy); n++;
+            });
+            return { ball: { x: ball.x, y: ball.y, h: ball.h, state: ball.state, owner: ball.owner, lock: !!ball.lock },
+                phase: !!motor.phase, phaseT: motor.phaseT, phaseDur: motor.phaseDur, queued: motor.phases.length,
+                actions: motor.actions.length + (motor.action ? 1 : 0), scale: motor.scale, lagM: n ? lag / n : 0, frame: motor.frame, stats: motor.stats };
         },
         debugPlays: function () {
             var d = data();
