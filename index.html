@@ -2688,7 +2688,7 @@
             <div id="inputToggle" onclick="toggleInput()">▲</div>
         </div>
         <div id="prueba-aviso" style="margin:6px 0 12px;padding:8px 12px;border-radius:8px;background:#3b2a00;border:1px solid #f59e0b;color:#fde68a;font-size:13px;line-height:1.4;text-align:center">
-            Versión de PRUEBA de la vista de campo (rama vista-campo, sesiones 8-10: movimiento continuo, cambio de campo, banquillos, camilla y entrenadores). Se abre con Manchester City – Villarreal (Supercopa de Europa T38) ya cargado.
+            Versión de PRUEBA de la vista de campo (rama vista-campo, sesiones 11-14). Novedades: las jugadas se planifican enteras al cargar (coreógrafo) y son coherentes: los remates salen de verdad (fuera, al palo, por encima, bloqueados, parados) y nadie se queda parado con el balón en el área; gol con la red moviéndose, aviso «¡GOL!» con el marcador y celebración; el juego se para en los cambios; al final todos se retiran; cambio de campo con fundido; banquillos más visibles en el móvil; gesto del VAR. Se abre con Manchester City – Villarreal (Supercopa de Europa T38) ya cargado.
             Para probar otro partido, pulsa ▼ junto al título, borra el texto y pega otro informe.
         </div>
 
@@ -7978,6 +7978,19 @@
                 finished: matchFinished,
                 seeking: campoSeekUntil != null || campoSeekPlayIndex != null || campoSeekUntilLine != null,
                 redCarded: Array.from(redCardedPlayers || []),
+                // Para el coreógrafo de la vista de campo: alineaciones iniciales y expulsiones de todo el partido.
+                homeStartersInit: (window.homeStartersData || []).map(function(p){ return { name: p.name, position: p.position }; }),
+                awayStartersInit: (window.awayStartersData || []).map(function(p){ return { name: p.name, position: p.position }; }),
+                homeSubsInit: (window.homeSubsData || []).map(function(p){ return { name: p.name, position: p.position }; }),
+                awaySubsInit: (window.awaySubsData || []).map(function(p){ return { name: p.name, position: p.position }; }),
+                redCardEvents: (function(){
+                    const out = [];
+                    ['home', 'away'].forEach(function(side){
+                        const h = matchHighlights && matchHighlights[side];
+                        ((h && h.redCards) || []).forEach(function(e){ out.push({ side: side, name: e.player, minute: e.minute }); });
+                    });
+                    return out;
+                })(),
                 score: (document.getElementById('score') || {}).textContent || '0 - 0',
                 narration: (document.getElementById('narration') || {}).textContent || '',
                 playersIn: findPlayersInText,
@@ -7997,6 +8010,12 @@
                     return m ? m[1].trim() : '';
                 })()
             };
+        };
+
+        // Reloj barato para la animación de la vista de campo (se consulta en cada fotograma).
+        window.getCampoClock = function() {
+            return { started: simulationStarted, paused: isPaused, finished: matchFinished,
+                seeking: campoSeekUntil != null || campoSeekPlayIndex != null || campoSeekUntilLine != null };
         };
 
         window.switchTab = switchTab;
