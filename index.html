@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PRUEBA vista de campo · Narrador dinámico de TSM</title>
-    <meta name="robots" content="noindex, nofollow">
+    <title>Narrador dinámico de TSM</title>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
     <style>
         /* Scrollbar consistente para toda la página */
@@ -2686,10 +2685,6 @@
         <div class="title-container">
             <h1 onclick="location.reload()">NARRADOR DINÁMICO DE PARTIDOS DE TSM</h1>
             <div id="inputToggle" onclick="toggleInput()">▲</div>
-        </div>
-        <div id="prueba-aviso" style="margin:6px 0 12px;padding:8px 12px;border-radius:8px;background:#3b2a00;border:1px solid #f59e0b;color:#fde68a;font-size:13px;line-height:1.4;text-align:center">
-            Versión de PRUEBA de la vista de campo (rama vista-campo, sesión 15). Novedades: saques de banda con las dos manos, saques de puerta, córners y saques de centro; faltas con barrera y sin barrera; fueras de juego con el banderín del liniere; dos linieres que siguen la línea del penúltimo defensor; protestas al árbitro; los disparos altos pasan claramente por encima del larguero; el balón que sale ya no rebota en la línea. Se abre con Manchester City – Villarreal (Supercopa de Europa T38) ya cargado.
-            Para probar otro partido, pulsa ▼ junto al título, borra el texto y pega otro informe.
         </div>
 
         <div id="inputSection">
@@ -8043,36 +8038,5 @@
         window.toggleStatsView = toggleStatsView;
     </script>
     <script src="campo.js"></script>
-    <script>
-    /* Solo en la página de prueba: precarga un partido real y abre la pestaña «Vista de campo». */
-    (function () {
-        function abrirCampo() {
-            var n = 0;
-            var iv = setInterval(function () {
-                var out = document.getElementById('output');
-                if (out && out.style.display === 'block') {
-                    clearInterval(iv);
-                    var tab = Array.prototype.find.call(document.querySelectorAll('.tab'), function (e) {
-                        return (e.getAttribute('onclick') || '').indexOf('campo-tab') !== -1;
-                    });
-                    if (tab) tab.click();
-                }
-                if (++n > 150) clearInterval(iv);
-            }, 200);
-        }
-        function precargar() {
-            var ta = document.getElementById('input');
-            if (!ta || ta.value.trim()) return;
-            fetch('partido.txt', { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (t) {
-                if (ta.value.trim()) return;
-                ta.value = t;
-                ta.dispatchEvent(new Event('input'));
-                abrirCampo();
-            }).catch(function () {});
-        }
-        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', precargar);
-        else precargar();
-    })();
-    </script>
 </body>
 </html>

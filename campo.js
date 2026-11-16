@@ -244,22 +244,32 @@
         };
     }
 
+    // «Balón llovido al punto de penalti», «envío hacia el punto de penalti»: un centro al área, no un penalti.
+    var PEN_SPOT_RE = /(al|hacia el|cerca del|sobre el|junto al) punto de penalti/g;
     function classify(text) {
         var s = String(text || '').toLowerCase();
         // «ocasión manifiesta de gol», «dedica el gol al banquillo»... no son un gol de esta jugada.
-        s = s.replace(/ocasi[oó]n (?:manifiesta )?de gol|posible gol|dedica el gol|celebra el gol|tras el gol/g, ' ');
-        if (/autogol|propia puerta/.test(s)) return 'own-goal';
+        s = s.replace(/ocasi[oó]n(?:es)? (?:manifiesta |clara )?de gol|posible gol|dedica el gol|celebra el gol|tras el gol|(?:era de|merec[ií]a|merece|mereci[oó]|ol[ií]a a|huele a|roza el|rozó el|cerca del|casi el|sin|acabar en|terminar en|l[ií]nea de|ocasiones de|buscando el|busca el|en busca del|a por el) gol|gol en contra|gol(?:es)? anulado|anula(?:do)? el gol/g, ' ');
+        // Gol anulado (fuera de juego, VAR, falta previa): no sube al marcador.
+        var annulled = /anula|anulado|no sube al marcador|no vale|invalida/.test(s);
+        if (!annulled && /autogol|propia puerta/.test(s)) return 'own-goal';
         // Evitar falsos positivos como "Golpea las vallas".
-        if (/¡+gol|go{3,}l|(?:^|[^\wáéíóúñ])¡?gol(?:es)?\b/i.test(s)) return 'goal';
-        if (/penalti|penalty/.test(s)) return 'penalty';
-        if (/c[oó]rner|saque de esquina/.test(s)) return 'corner';
+        if (!annulled && /¡+gol|go{3,}l|(?:^|[^\wáéíóúñ])¡?gol(?:es)?\b/i.test(s)) return 'goal';
+        if (/penalti|penalty/.test(s.replace(PEN_SPOT_RE, ' '))) return 'penalty';
+        if (/c[oó]rner|saque de esquina/.test(s)) {
+            // «... prueba de volea ... Rebota en un defensor y se marcha a córner»: es un remate (el córner es su desenlace, se saca en la siguiente).
+            var lastC = (s.split('...').map(function (x) { return x.trim(); }).filter(Boolean).pop() || '');
+            if (/remat|chut|dispar|volea|cabezazo|ca[ñn]onazo|zapatazo|busca puerta|prueba fortuna/.test(s) && /c[oó]rner\W*$/.test(lastC) &&
+                !/bander[ií]n|(lanza|saca|bota|sacar|botar) (el|un) c[oó]rner|saque de esquina/.test(s)) return 'shot';
+            return 'corner';
+        }
         if (/saque de (puerta|meta)/.test(s)) return 'goalkick';
         if (/tarjeta roja/.test(s)) return 'red';
         if (/tarjeta amarilla/.test(s)) return 'yellow';
         if (/lesionado|lesi[oó]n/.test(s)) return 'injury';
         if (/cambio en |entra .+ por |sale .+ entra |sustituye/.test(s)) return 'sub';
         if (/qu[eé] parada|tapa el remate|ataja|el portero|vuela y (desvía|saca)/.test(s)) return 'save';
-        if (/remate|chuta|disparo|volea|busca puerta|define |cabezazo|en posici[oó]n de remate|busca (la escuadra|el ángulo)/.test(s)) return 'shot';
+        if (/remate|remata\b|chuta|\bchut\b|disparo|dispara\b|prueba fortuna|zapatazo|ca[ñn]onazo|volea|busca puerta|define |cabezazo|en posici[oó]n de remate|busca (la escuadra|el ángulo)/.test(s)) return 'shot';
         if (/contraataque|a la contra|se va de contra|sale de contra/.test(s)) return 'counter';
         if (/(?:^|[^a-záéíóúñ])despej[aeo]|manda (el bal[oó]n )?a la grada|rechaza (de cabeza|el bal[oó]n)/.test(s) && !/ataja|qu[eé] parada/.test(s)) return 'clearance';
         if (/frente a porter[ií]a|mano a mano|solo ante|se planta|último defensor/.test(s)) return 'oneonone';
@@ -512,6 +522,99 @@
 
     // Saques de centro: primera jugada del partido, de la segunda parte y de cada parte de la prórroga.
     // Saca el equipo de esa primera jugada en la primera parte; en la segunda, el otro (reglamento).
+    /* ---- Goles según el marcador narrado ----
+       La narración trae tras cada gol la línea «Local n-m Visitante ...». Esa línea manda: una jugada
+       solo es gol si el marcador cambia (un «¡gol!» anulado, «la jugada merecía gol»... no cuentan), y
+       el equipo que marca es el que sube en el marcador (en una falta directa la cabecera es la del
+       equipo que hizo la falta). Si el partido no trae esas líneas, se queda la clasificación por texto. */
+    function scoreLinesIn(text, d) {
+        var re = /(?:^|\n)\s*(?:\.\.\.)?\s*([^\n]*?[A-Za-zÀ-ÿ.)][^\n]*?)\s(\d{1,2})\s?-\s?(\d{1,2})\s([^\n]*?[A-Za-zÀ-ÿ(][^\n]*?)\s*\.\.\./g;
+        var m, out = [], hf = foldText(d.homeTeam || ''), af = foldText(d.awayTeam || '');
+        function like(a, b) { a = foldText(a).trim(); if (!a || !b) return false; return a === b || a.indexOf(b) >= 0 || b.indexOf(a) >= 0 || a.split(' ')[0] === b.split(' ')[0]; }
+        while ((m = re.exec(String(text || ''))) !== null) {
+            var l = m[1], r = m[4], h = parseInt(m[2], 10), a = parseInt(m[3], 10);
+            if (like(l, hf) || like(r, af)) out.push({ h: h, a: a });
+            else if (like(l, af) || like(r, hf)) out.push({ h: a, a: h });
+        }
+        return out;
+    }
+    function reconcileGoals(plays, d) {
+        var lines = plays.map(function (p) { return scoreLinesIn(p.text, d); });
+        if (!lines.some(function (l) { return l.length; })) { capGoalsToFinal(plays, d); return; }
+        var cur = { h: 0, a: 0 };
+        plays.forEach(function (p, i) {
+            var l = lines[i], sl = l.length ? l[l.length - 1] : null;
+            var wasGoal = p.kind === 'goal' || p.kind === 'own-goal';
+            var changed = sl && (sl.h !== cur.h || sl.a !== cur.a) && sl.h >= cur.h && sl.a >= cur.a;
+            if (changed) {
+                var side = sl.h > cur.h ? 'home' : 'away';
+                var own = /autogol|propia puerta/i.test(p.text || '');
+                p.kind = own ? 'own-goal' : 'goal';
+                p.scoreSide = side;
+                p.scoreAfter = sl.h + '-' + sl.a;
+                // El equipo de la jugada es el que ataca y marca (en propia puerta, el que se beneficia).
+                p.headerTeam = p.team;
+                p.team = side === 'home' ? d.homeTeam : d.awayTeam;
+                cur = { h: sl.h, a: sl.a };
+                p.target = inferTarget(p.kind, p.team, p.players, d, p.i, p.text, p.lane);
+            } else if (wasGoal) {
+                // «¡Gol!» que no sube al marcador (anulado) o mención suelta: no es un gol.
+                p.kind = classify(String(p.text || '').replace(/autogol|propia puerta|¡+\s*gol\w*!*|go{3,}l\w*|\bgol(?:es)?\b/gi, ' '));
+                p.annulled = /anula|no sube|no vale/i.test(p.text || '');
+                p.target = inferTarget(p.kind, p.team, p.players, d, p.i, p.text, p.lane);
+            }
+        });
+    }
+
+    // Sin líneas de marcador narradas: manda el «Resultado final» del informe. Si la narración da más
+    // goles a un equipo de los que tiene al final («la jugada era de gol, pero...»), sobran los de
+    // texto menos claro (sin «¡gol!»), empezando por los últimos.
+    function finalScoreOf(d) {
+        var t = String(d && d.narrationText || '');
+        var m = t.match(/Resultado final\s*:\s*([^\n]*?)\s(\d{1,2})\s*-\s*(\d{1,2})\s([^\n]*)/i);
+        if (!m) return null;
+        var hf = foldText(d.homeTeam || ''), l = foldText(m[1]).trim();
+        var swap = hf && l && !(l === hf || l.indexOf(hf) >= 0 || hf.indexOf(l) >= 0) && foldText(m[4]).trim().indexOf(hf) >= 0;
+        var h = parseInt(m[2], 10), a = parseInt(m[3], 10);
+        return swap ? { h: a, a: h } : { h: h, a: a };
+    }
+    function capGoalsToFinal(plays, d) {
+        var fin = finalScoreOf(d); if (!fin) return;
+        ['home', 'away'].forEach(function (side) {
+            var lim = side === 'home' ? fin.h : fin.a;
+            var gs = plays.filter(function (p) {
+                if (p.kind !== 'goal' && p.kind !== 'own-goal') return false;
+                var ts = sideOfTeam(p.team, d) || 'home';
+                return (p.kind === 'own-goal' ? (ts === 'home' ? 'away' : 'home') : ts) === side;
+            });
+            if (gs.length <= lim) return;
+            var clear = function (p) { return /¡+\s*gol|go{3,}l|autogol|propia puerta/i.test(p.text || '') ? 1 : 0; };
+            var order = gs.slice().sort(function (a, b) { return clear(a) - clear(b) || b.i - a.i; });
+            order.slice(0, gs.length - lim).forEach(function (p) {
+                p.kind = classify(String(p.text || '').replace(/autogol|propia puerta|¡+\s*gol\w*!*|go{3,}l\w*|\bgol(?:es)?\b/gi, ' '));
+                p.annulled = /anula|no sube|no vale/i.test(p.text || '');
+                p.target = inferTarget(p.kind, p.team, p.players, d, p.i, p.text, p.lane);
+            });
+        });
+    }
+
+    // Penalti narrado con la cabecera del equipo que lo comete («Real Madrid: Theo derriba a Llorente
+    // ... ¡PENALTI!»): lo lanza el otro equipo.
+    function fixPenaltySides(plays, d) {
+        plays.forEach(function (p) {
+            if (p.kind !== 'penalty' || p.scoreSide) return;
+            var t = foldText(p.text), first = t.split('\n')[0];
+            if (!/(derriba|entrada de|mano de|falta de|comete|agarr|zancadill|empuj|arrolla|pisot|codazo|zarandea|objeta|tumba|pierde los papeles)/.test(first)) return;
+            var hs = sideOfTeam(p.team, d);
+            var fs = p.players && p.players.length && d.sideOfPlayer ? d.sideOfPlayer(p.players[0]) : null;
+            if (hs && (!fs || fs === hs)) {
+                p.headerTeam = p.team;
+                p.team = hs === 'home' ? d.awayTeam : d.homeTeam;
+                p.target = inferTarget(p.kind, p.team, p.players, d, p.i, p.text, p.lane);
+            }
+        });
+    }
+
     function markKickoffs(plays, d) {
         var firstHalfKicker = null, etKicker = null;
         var seen46 = false, seen91 = false, seen106 = false;
@@ -575,6 +678,8 @@
                 target: inferTarget(kind, team, players, d, i, text, lane)
             };
         });
+        reconcileGoals(parsedPlays, d);
+        fixPenaltySides(parsedPlays, d);
         markKickoffs(parsedPlays, d);
         var kicks = parseShootoutKicks(d);
         if (kicks.length) {
@@ -1191,7 +1296,6 @@
         var scorer = namedPlayers(players, play.players, attack).pop() || namedPlayers(players, play.players).pop();
         var cornerY = ballT.y < 50 ? 26 : 74;
         var meetX = attack === 'home' ? 78 : 22;
-        if (play.kind === 'own-goal') meetX = attack === 'home' ? 24 : 76;
         if (scorer) placeAt(scorer, meetX, cornerY);
         var mates = ofSide(players, attack).filter(function (p) { return p !== scorer && p.pos !== 'GK'; });
         var n = mates.length;
@@ -1564,9 +1668,13 @@
         if (info.mate) path.push({ x: info.mate.tx, y: info.mate.ty });
         // Arrancan todos: medio camino entre la formación de saque y su sitio.
         players.forEach(function (p) {
+            if (p === info.taker || p === info.mate) return;
             p.tx = lerp(p.tx, p.baseX, 0.45);
             p.ty = lerp(p.ty, p.baseY, 0.45);
         });
+        // El que saca no conduce: toca atrás al compañero desde el centro, quieto, y luego se incorpora.
+        if (info.taker) { info.taker.tx = 50 - dir * 1.4; info.taker.ty = 50; }
+        if (recv === info.taker || recv === info.mate) recv = null;
         if (recv) { placeAt(recv, recv.tx - dir * 1.5, recv.ty); path.push({ x: recv.tx, y: recv.ty }); }
         phases.push({ players: snapshotTargets(players), ballPath: path, ms: 700, highlight: [], pose: false, kickoff: true, ref: (function () { var r = kickoffRefSpot(kicker); return { x: r.x + (kicker === 'away' ? -3 : 3), y: r.y - 2 }; })() });
         resetToBase(players);
@@ -2081,6 +2189,36 @@
             // Saque de centro: el balón vuelve al centro de un envío (nadie lo conduce 40 m).
             acts.push({ type: 'kick', pt: { x: path[0].x, y: path[0].y }, forceKind: 'reset' });
         }
+        if (simulating && ph.pose === false && path.length === 1 && Math.abs(path[0].x - 50) < 0.5 && Math.abs(path[0].y - 50) < 0.5) {
+            // Formación de saque de centro: el balón vuelve al centro y se queda allí (nadie se lo pasa ni lo conduce).
+            if (!acts.length && ball.state !== 'flight' && mDist(ball.x, ball.y, 50, 50) > 2.5) acts.push({ type: 'kick', pt: { x: 50, y: 50 }, forceKind: 'reset' });
+            if (ball.state === 'held' && mDist(ball.x, ball.y, 50, 50) <= 2.5) { ball.state = 'free'; ball.owner = null; }
+            // Si después no viene el pase de saque, el saque se hace aquí mismo: toque atrás a un compañero.
+            var nxK = motor.phases && motor.phases[0];
+            if (!(nxK && (nxK.kickPass || (nxK.kickoff && (nxK.ballPath || []).length >= 2)))) {
+                var kpl = ph.players || {}, tkK = null, tdK = 1e9;
+                Object.keys(kpl).forEach(function (k) { var st = playerState[k]; if (!st || st.leaving || st.pos === 'GK') return; var dd = mDist(kpl[k].x, kpl[k].y, 50, 50); if (dd < tdK) { tdK = dd; tkK = k; } });
+                if (tkK) {
+                    var kside = playerState[tkK].side, kdir = kside === 'home' ? 1 : -1, mtK = null, mdK = 1e9;
+                    Object.keys(kpl).forEach(function (k) {
+                        var st = playerState[k]; if (k === tkK || !st || st.side !== kside || st.leaving || st.pos === 'GK') return;
+                        if ((kpl[k].x - 50) * kdir > -2) return;
+                        var dd = mDist(kpl[k].x, kpl[k].y, 50 - kdir * 8, 50); if (dd < mdK) { mdK = dd; mtK = k; }
+                    });
+                    if (mtK) acts.push({ type: 'koPass', taker: tkK, mate: mtK, pt: { x: kpl[mtK].x, y: kpl[mtK].y } });
+                }
+            }
+            return acts;
+        }
+        if (simulating && (ph.kickPass || ph.kickoff) && nodes.length >= 2 && nodes[1].who && Math.abs(path[0].x - 50) < 0.5 && Math.abs(path[0].y - 50) < 0.5) {
+            // Saque de centro: el balón en el centro, el que saca lo toca atrás a un compañero (sin conducir).
+            acts = [{ type: 'koPass', taker: nodes[0].who, mate: nodes[1].who, pt: nodes[1].pt }];
+            for (var j = 2; j < nodes.length; j++) {
+                if (nodes[j].who) acts.push({ type: 'pass', to: nodes[j].who, pt: nodes[j].pt, lofted: mDist(nodes[j - 1].pt.x, nodes[j - 1].pt.y, nodes[j].pt.x, nodes[j].pt.y) > 26 });
+                else acts.push({ type: 'kick', pt: nodes[j].pt, lofted: false });
+            }
+            return acts;
+        }
         var prevWho = ball.state === 'held' ? ball.owner : null;
         var prevPt = { x: ball.x, y: ball.y };
         for (var i = 0; i < nodes.length; i++) {
@@ -2125,7 +2263,7 @@
         ball.state = 'flight';
         ball.owner = null;
         ball.lock = false;
-        ball.fl = { from: from, to: { x: to.x, y: to.y }, t: 0, dur: dur, kind: kind, H: kind === 'lofted' ? clamp(dist / 30, 0.35, 1.1) : (kind === 'reset' ? 0.5 : (kind === 'over' ? 2.6 : 0)), receiver: receiver || null, uLine: uLine };
+        ball.fl = { at: simClock, from: from, to: { x: to.x, y: to.y }, t: 0, dur: dur, kind: kind, H: kind === 'lofted' ? clamp(dist / 30, 0.35, 1.1) : (kind === 'reset' ? 0.5 : (kind === 'over' ? 2.6 : 0)), receiver: receiver || null, uLine: uLine };
     }
 
     function startAction(a) {
@@ -2143,6 +2281,41 @@
         }
         motor.actionT += dt;
         var tp = tempo();
+        if (a.type === 'koPass') {
+            if (ball.state === 'flight') return;
+            var mateSt = holderOf(a.mate);
+            var tk = holderOf(a.taker);
+            if (!tk || tk.leaving || a.taker === a.mate) {
+                var mside = mateSt ? mateSt.side : simAttackSide;
+                tk = null; a.taker = nearestOf(sideKeys(mside, true).filter(function (k) { return k !== a.mate && !playerState[k].leaving; }), 50, 50);
+                tk = holderOf(a.taker);
+            }
+            if (!tk || !mateSt) { startAction(null); return; }
+            if (mDist(ball.x, ball.y, 50, 50) > 6) { ball.owner = null; ball.state = 'free'; launchBall({ x: 50, y: 50 }, 'reset', null); return; }
+            // Balón quieto en el centro hasta que el que saca llega a él (nadie más lo toca).
+            ball.x = 50; ball.y = 50; ball.h = 0; ball.state = 'free'; ball.owner = null; ball.goalNet = false;
+            tk.tx = tk.hx = 50 + (tk.side === 'home' ? -0.5 : 0.5); tk.ty = tk.hy = 50; tk.pend = null;
+            var koLate = !!(motor.phase && motor.phase.late);   // saque de centro que se arrastra de la jugada anterior: sin esperas largas
+            tk.spd = Math.max(tk.spd || 0, koLate ? 7 : 5);
+            // Los rivales, fuera del círculo central antes de sacar.
+            var oppIn = false;
+            sideKeys(tk.side === 'home' ? 'away' : 'home', true).forEach(function (k) {
+                var st = playerState[k], dd = mDist(st.x, st.y, 50, 50), dt2 = mDist(st.tx, st.ty, 50, 50);
+                if (dd < 8.6) oppIn = true;
+                if (dt2 < 10) {
+                    var ang = Math.atan2((st.ty - 50) * M_Y, (st.tx - 50) * M_X);
+                    if (dt2 < 0.5) ang = tk.side === 'home' ? 0 : Math.PI;
+                    st.tx = st.hx = 50 + Math.cos(ang) * 10.5 / M_X; st.ty = st.hy = 50 + Math.sin(ang) * 10.5 / M_Y; st.pend = null;
+                    st.spd = Math.max(st.spd || 0, 4);
+                }
+            });
+            if ((mDist(tk.x, tk.y, 50, 50) > 1.3 || oppIn) && motor.actionT < (koLate ? 2.4 : 4.5) / tp) return;
+            if (motor.actionT < 0.25 / tp) return;
+            ball.state = 'held'; ball.owner = a.taker;
+            launchBall({ x: mateSt.tx, y: mateSt.ty }, 'ground', a.mate);
+            startAction(null);
+            return;
+        }
         if (a.type === 'carry') {
             var who = holderOf(a.who);
             if (!who) { startAction(null); return; }
@@ -2160,13 +2333,66 @@
             var owner = holderOf(ball.owner);
             var ready = !owner || mDist(owner.x, owner.y, owner.tx, owner.ty) < 2.5;
             if (ball.state === 'flight') return;
+            // Pase al que cae en fuera de juego: sale cuando ya está por delante de la defensa.
+            if (a.type === 'pass' && motor.phase && motor.phase.waitRecv === a.to && motor.actionT < 3.5) {
+                var wr = holderOf(a.to);
+                if (wr && (mDist(wr.x, wr.y, wr.tx, wr.ty) > 0.8 || motor.phaseT < 1.0)) return;
+            }
             if ((ready && motor.actionT > 0.12 / tp) || motor.actionT > 0.9 / tp) {
                 var to = a.pt;
                 var recv = a.type === 'pass' ? holderOf(a.to) : null;
                 if (recv) to = { x: recv.tx, y: recv.ty };
                 var kind = a.forceKind || (a.shot ? 'shot' : (a.lofted ? 'lofted' : 'ground'));
                 if (recv && owner && recv.side !== owner.side) kind = recv.pos === 'GK' ? 'shot' : 'ground';
+                // Balón parado dentro del campo tras un remate (parada, rechace): es un balón suelto más, alguien lo recoge.
+                if (simulating && ball.lock && !simRestart && !ball.goalNet && ball.state === 'free' && ball.x >= 0 && ball.x <= 100 && ball.y >= 0 && ball.y <= 100) ball.lock = false;
+                // Balón suelto lejos del destino: antes de enviarlo, alguien va a por él (nunca viaja solo).
+                if (simulating && a.forceKind !== 'reset' && !ball.lock && !owner && ball.state === 'free' && mDist(ball.x, ball.y, to.x, to.y) > 20 &&
+                    ball.x > 0 && ball.x < 100 && ball.y > 0 && ball.y < 100 && (a.fetchT = (a.fetchT || 0) + dt) < 4) {
+                    var fetch = a.fetcher && playerState[a.fetcher] ? a.fetcher : nearestOf(sideKeys(simAttackSide, true), ball.x, ball.y);
+                    if (!a.fetcher && fetch && mDist(playerState[fetch].x, playerState[fetch].y, ball.x, ball.y) > 15) fetch = nearestOf(sideKeys('home', true).concat(sideKeys('away', true)), ball.x, ball.y) || fetch;
+                    a.fetcher = fetch;
+                    if (fetch) { var fs = playerState[fetch]; fs.tx = ball.x; fs.ty = ball.y; fs.hx = ball.x; fs.hy = ball.y; fs.pend = null; fs.spd = Math.max(fs.spd || 0, 7); }
+                    return;
+                }
+                // Balón fuera del campo (remate de la jugada anterior) y la jugada sigue en otro sitio: antes, su saque de puerta o de banda.
+                if (simulating && !a.forceKind && !simRestart && ball.state !== 'flight' && !owner && (ball.x < -0.2 || ball.x > 100.2 || ball.y < -0.2 || ball.y > 100.2) && mDist(ball.x, ball.y, to.x, to.y) > 20) {
+                    ball.goalNet = false; ball.lock = false; ball.state = 'free'; ball.owner = null;
+                    simCheckOut();
+                    if (simRestart) return;
+                }
                 if (!a.forceKind && (ball.lock || (!owner && ball.state === 'free' && mDist(ball.x, ball.y, to.x, to.y) > 20))) kind = kind === 'shot' ? kind : 'reset';
+                // El remate lo hace el equipo que ataca: si el balón lo tiene un defensor (lo recogió suelto), antes se lo quita un atacante.
+                // (Si el que lo tiene es el portero, o ya está donde iba el remate, el remate ya ocurrió: no se repite.)
+                if (simulating && (kind === 'shot' || kind === 'over' || a.shot) && owner && owner.side !== simAttackSide && !simRestart &&
+                    (owner.pos === 'GK' || mDist(ball.x, ball.y, to.x, to.y) < 4)) { startAction(null); return; }
+                if (simulating && (kind === 'shot' || kind === 'over' || a.shot) && owner && owner.side !== simAttackSide && !simRestart) {
+                    var thief = a.thief || nearestOf(sideKeys(simAttackSide, true), ball.x, ball.y);
+                    a.thief = thief;
+                    var ths = thief && playerState[thief];
+                    if (ths && (a.stealT = (a.stealT || 0) + dt) < 1.6) {
+                        if (mDist(ths.x, ths.y, ball.x, ball.y) < 1.8) { ball.owner = thief; ball.state = 'held'; ball.lastSide = simAttackSide; motor.actionT = 0; }
+                        else { ths.tx = ths.hx = ball.x; ths.ty = ths.hy = ball.y; ths.pend = null; ths.spd = Math.max(ths.spd || 0, 7); }
+                        return;
+                    }
+                    if (ths) { ball.owner = thief; ball.state = 'held'; ball.lastSide = simAttackSide; owner = ths; }
+                }
+                // Remate desde muy lejos: antes, un pase a un compañero a distancia de tiro (20-24 m).
+                if (simulating && (kind === 'shot' || kind === 'over') && !a.approached && !simRestart && ball.x >= 0 && ball.x <= 100) {
+                    var gxS = to.x > 50 ? 100 : 0, dG = mDist(ball.x, ball.y, gxS, 50);
+                    if (dG > 30) {
+                        a.approached = true;
+                        var ux2 = (ball.x - gxS) * M_X, uy2 = (ball.y - 50) * M_Y, ul2 = Math.max(0.1, Math.hypot(ux2, uy2)), dS = 20 + rng() * 4;
+                        var P = { x: gxS + ux2 / ul2 * dS / M_X, y: clamp(50 + uy2 / ul2 * dS / M_Y, 22, 78) };
+                        var sideA = owner ? owner.side : simAttackSide;
+                        var mate = nearestOf(sideKeys(sideA, true).filter(function (k) { return k !== ball.owner; }), P.x, P.y);
+                        if (mate) setMoverTarget(playerState[mate], P.x, P.y, 0.6, { involved: true });
+                        if (ball.owner) { ball.owner = null; ball.state = 'free'; }
+                        launchBall(P, dG - dS > 25 ? 'lofted' : 'ground', mate);
+                        motor.actionT = 0;
+                        return;
+                    }
+                }
                 launchBall(to, kind, a.type === 'pass' ? a.to : null);
                 if ((a.shot && isGoalPoint(to)) || a.forceKind === 'over' || (a.forceKind === 'shot' && (to.x > 100.5 || to.x < -0.5))) ball.fl.net = true;
                 if (a.pt && a.pt.touch === 'def') ball.lastSide = oppOf(simAttackSide);
@@ -2217,11 +2443,17 @@
             ball.h = 0;
             return;
         }
-        // Balón suelto: lo controla el primero que llega (salvo si está dentro de la red).
-        if (!ball.lock) {
+        // Balón suelto: lo controla el primero que llega (salvo si está dentro de la red, o espera en el centro el saque).
+        if (!ball.lock && !koHoldNow()) {
             var near = nearestPlayerTo(ball.x, ball.y, 1.5, false);
             if (near) { ball.state = 'held'; ball.owner = near; if (playerState[near]) ball.lastSide = playerState[near].side; }
         }
+    }
+
+    function isKoFormPh(q) { var bp = q && q.ballPath || []; return !!q && q.pose === false && bp.length === 1 && Math.abs(bp[0].x - 50) < 0.5 && Math.abs(bp[0].y - 50) < 0.5; }
+    function koHoldNow() {
+        if (!simulating || !motor.phase || mDist(ball.x, ball.y, 50, 50) > 3) return false;
+        return isKoFormPh(motor.phase) || !!(motor.action && motor.action.type === 'koPass') || (motor.actions || []).some(function (a) { return a.type === 'koPass'; });
     }
 
     function startMotorPhase(ph) {
@@ -2892,7 +3124,7 @@
         var other = side === 'home' ? 'away' : side === 'away' ? 'home' : null;
         var named = sideMentioned(play.text, d) || side;
         if (play.kind === 'goal' || play.kind === 'own-goal') {
-            var scorer = play.kind === 'own-goal' ? other : side;
+            var scorer = play.scoreSide || side;
             if (scorer) { setMood(scorer, 'celebrate'); setMood(scorer === 'home' ? 'away' : 'home', 'despair'); }
             return;
         }
@@ -3020,11 +3252,19 @@
             var events = [];
             var re = /sale\s+(.+?)\s*\((\w+)\)\s*,?\s*entra\s+(.+?)\s*(?:\((\w+)\)|$|\n)/gi, m;
             var text = String(p.text || '').replace(/ \n /g, '\n');
-            while ((m = re.exec(text))) {
-                var outN = m[1].trim(), inN = m[3].trim(), inPos = m[4] || m[2];
+            // Otras formas del cambio: «Entra X (MF) por Y» y «X (DM) sustituye a Y (MF)».
+            var subs = [];
+            while ((m = re.exec(text))) subs.push({ at: m.index, out: m[1], inn: m[3], pos: m[4] || m[2] });
+            var re2 = /entra\s+([^\n():]+?)\s*\((\w+)\)\s*por\s+([^\n():]+?)\s*(?:\((\w+)\)|\.\.\.|$|\n)/gi;
+            while ((m = re2.exec(text))) subs.push({ at: m.index, out: m[3], inn: m[1], pos: m[2] });
+            var re3 = /(?:^|[:\n]|\.\.\.)\s*(?:\(\w+\)\s*)?((?:[^\n():.]|\.(?!\.))+?)\s*\((\w+)\)\s*sustituye a\s+([^\n():]+?)\s*(?:\((\w+)\)|\.\.\.|$|\n)/gi;
+            while ((m = re3.exec(text))) subs.push({ at: m.index, out: m[3], inn: m[1], pos: m[2] });
+            subs.sort(function (a, b) { return a.at - b.at; });
+            subs.forEach(function (sb) {
+                var outN = sb.out.trim(), inN = sb.inn.trim(), inPos = sb.pos;
                 var side = null, oi = -1;
                 ['home', 'away'].forEach(function (s) { if (side) return; var k = findIn(cur[s], outN); if (k >= 0) { side = s; oi = k; } });
-                if (!side) continue;
+                if (!side) return;
                 var pi = findIn(pool[side], inN);
                 var rec = pi >= 0 ? pool[side][pi] : { name: inN };
                 var inP = { name: rec.name, position: /^(GK|DF|DM|MF|AM|FW)$/i.test(inPos || '') ? inPos.toUpperCase() : cur[side][oi].position };
@@ -3032,7 +3272,7 @@
                 outNames[side].push(cur[side][oi].name);
                 cur[side][oi] = inP;
                 if (squad[side].indexOf(inP.name) === -1) squad[side].push(inP.name);
-            }
+            });
             (reds[i] || []).forEach(function (e) {
                 var s = e.side, k = findIn(cur[s], e.name);
                 if (k < 0) { s = s === 'home' ? 'away' : 'home'; k = findIn(cur[s], e.name); }
@@ -3059,10 +3299,38 @@
         var k = play.kind;
         if (k === 'goal' || k === 'own-goal') return 'goal';
         if (k === 'save') return /corner/.test(t) ? 'save-corner' : (/rechaz|suelta|despeja|repele/.test(t) ? 'save-parry' : 'save');
+        var SHOTW = /remat|chut|dispar|volea|cabezazo|canonazo|zapatazo|tiro|busca puerta|prueba fortuna|define/;
+        var lastChunk = (t.split(/\.\.\./).map(function (x) { return x.trim(); }).filter(Boolean).pop() || '');
+        // Córner que nace de un remate desviado («... suelta un cañonazo ... E. Martinez desvía a córner»)
+        if (k === 'corner') return (SHOTW.test(t) && /(desvia|saca|manda|despeja|toca|envia|mete la mano)[a-z ]* a corner|a corner$/.test(lastChunk) && !/banderin|lanza el corner|saca el corner|bota el corner/.test(t)) ? 'save-corner' : null;
         if (k !== 'shot' && k !== 'oneonone' && k !== 'box') return null;
-        if (/(poste|larguero|palo|madera|travesano)/.test(t) && !/rozando|junto al|cerca del|lame/.test(t)) return 'post';
-        if (/alto|por encima|se eleva|arriba|nubes|grada/.test(t)) return 'over';
-        if (/bloque|tapon|intercept|despeja la defensa|se estrella en|rebota en|corta el|desviado por/.test(t)) return 'block';
+        // Jugada en el área o mano a mano sin remate (le roban el balón, anticipa el control): no hay desenlace de tiro.
+        if (k !== 'shot' && !SHOTW.test(t)) return null;
+        function clean(x) {
+            // «se repliega en bloque bajo» es una forma de defender, no un remate bloqueado
+            x = x.replace(/\b(en|un|su|el) bloque( (bajo|alto|medio|compacto|defensivo))?/g, ' ');
+            // «primer / segundo palo» es el sitio del remate, no que dé en el palo
+            return x.replace(/(primer|segundo|al|del) palo (corto|largo)|(primer|segundo) palo/g, ' ');
+        }
+        function decide(x) {
+            if (/(a|al) corner\W*$/.test(x)) return 'save-corner';
+            if (/retiene|atrapa|blocaa?|ataja|encaja el impacto|se queda con el balon|para el (remate|disparo|tiro)|despeja de punos|corta de punos/.test(x)) return 'save';
+            if (/vallas|publicidad|publicitari/.test(x)) return 'wide';
+            if (/por encima (del|de la) (larguero|travesano|porteria)/.test(x)) return 'over';
+            // «rozó el larguero»: pasa rozando por encima (o por fuera si es el palo), no rebota
+            if (/roz(o|a|ando) (el |la )?(larguero|travesano)/.test(x)) return 'over';
+            if (/roz(o|a|ando) (el |la )?(poste|palo|madera)/.test(x)) return 'wide';
+            if (/(poste|larguero|palo|madera|travesano)/.test(x) && !/rozando|junto al|cerca del|lame/.test(x)) return 'post';
+            if (/alto|por encima|se eleva|arriba|nubes|grada/.test(x)) return 'over';
+            if (/bloque|tapon|intercept|despeja la defensa|se estrella en|rebota en|corta el|desviado por/.test(x)) return 'block';
+            return null;
+        }
+        // «busca puerta ... H. Larsson lee la jugada y se lleva el balón»: le quitan el balón antes del remate (no hay tiro).
+        if (!/remat|chut|dispar|volea|cabezazo|canonazo|zapatazo|empalma|golpea/.test(t) && /(se lleva el balon|le roba|roba el balon|anticipa|corta el avance|lee la jugada|se queda con el balon|intercepta)/.test(lastChunk)) return 'tackle';
+        // Manda el desenlace (las dos últimas frases); lo de antes («rebota en X» en la elaboración) no decide.
+        var parts = t.split(/\.\.\./).map(function (x) { return x.trim(); }).filter(Boolean);
+        var r = decide(clean(parts.slice(-2).join(' ... '))) || decide(clean(t));
+        if (r) return r;
         if (k === 'shot' || /fuera|desviad|rozando|lejos|remat|chut|dispar/.test(t)) return 'wide';
         return null;
     }
@@ -3151,7 +3419,17 @@
                 path = [from, { x: bp.x, y: bp.y, kind: 'shot' }];
             }
         } else if (oc === 'save-corner' || oc === 'save-parry') {
-            path = [from, oc === 'save-corner' ? { x: gx + dir * 1.5, y: from.y < 50 ? 30 : 70, kind: 'ground', touch: 'def' } : { x: gx - dir * 10, y: clamp(from.y + side * 12, 15, 85), kind: 'ground' }];
+            // Remate desviado a córner: se ve el disparo, que sale junto al palo tocado por el portero o un defensa.
+            if (oc === 'save-corner' && ptAtt(from.x, attack) <= 88) path = [from, { x: gx + dir * 1.5, y: 50 + side * (6.5 + rng() * 3), kind: 'shot', touch: 'def' }];
+            else path = [from, oc === 'save-corner' ? { x: gx + dir * 1.5, y: from.y < 50 ? 30 : 70, kind: 'ground', touch: 'def' } : { x: gx - dir * 10, y: clamp(from.y + side * 12, 15, 85), kind: 'ground' }];
+        } else if (oc === 'tackle') {
+            // Le quitan el balón antes del remate: el defensor más cercano entra y se queda con él.
+            var defS = attack === 'home' ? 'away' : 'home', tb = null, tbd = 1e9;
+            Object.keys(snap).forEach(function (k) { if (k.split(':')[0] !== defS || /GK/.test(k)) return; var dd = mDist(snap[k].x, snap[k].y, from.x, from.y); if (dd < tbd) { tbd = dd; tb = k; } });
+            if (tb) { var tp2 = { x: from.x - dir * 0.9, y: from.y + 0.6 }; snap[tb] = tp2; path = [from, { x: tp2.x, y: tp2.y }]; }
+        } else if (oc === 'save' && ptAtt(from.x, attack) <= 88) {
+            // Parada lejos del área chica: el remate sale de verdad hacia el portero.
+            path = [from, { x: gx - dir * 1.2, y: 50 + side * 1.2, kind: 'shot' }];
         }
         if (oc.indexOf('save') === 0 && lp.length && ptAtt(from.x, attack) > 88) {
             // Parada: el remate sale de verdad hacia el portero (no es un pase al portero).
@@ -3167,7 +3445,7 @@
         var cel = null, kick = null;
         phases.forEach(function (ph) { if (ph.pose === true && !cel) cel = ph; if (ph.pose === false) kick = ph; });
         if (!cel) return;
-        var scorerSide = play.kind === 'own-goal' ? (attack === 'home' ? 'away' : 'home') : attack;
+        var scorerSide = attack;
         // El balón entra de verdad en la portería: el último punto antes de la celebración va a la red.
         var ci = phases.indexOf(cel);
         var shotPh = ci > 0 ? phases[ci - 1] : null;
@@ -3232,6 +3510,28 @@
         return st && st.pos === 'GK';
     }
 
+    // Saque de centro tras un gol: el que saca toca atrás a un compañero (nunca sale conduciendo).
+    function addKickoffPass(phases) {
+        for (var i = 0; i < phases.length; i++) {
+            var ph = phases[i], bp = ph.ballPath || [];
+            if (ph.pose !== false || bp.length !== 1 || Math.abs(bp[0].x - 50) > 0.5 || Math.abs(bp[0].y - 50) > 0.5) continue;
+            var nx = phases[i + 1];
+            if (nx && (nx.kickPass || ((nx.ballPath || []).length >= 2 && mDist(nx.ballPath[0].x, nx.ballPath[0].y, 50, 50) < 0.5))) continue;   // ya hay pase de saque
+            var pl = ph.players || {}, taker = null, bd = 1e9;
+            Object.keys(pl).forEach(function (k) { var dd = mDist(pl[k].x, pl[k].y, 50, 50); if (dd < bd) { bd = dd; taker = k; } });
+            if (!taker || bd > 4) continue;
+            var side = taker.split(':')[0], dir = side === 'home' ? 1 : -1, mate = null, md = 1e9;
+            Object.keys(pl).forEach(function (k) {
+                if (k === taker || k.split(':')[0] !== side) return;
+                var dd = mDist(pl[k].x, pl[k].y, 50 - dir * 3.2, 50);
+                if (dd < md && (pl[k].x - 50) * dir < 0) { md = dd; mate = k; }
+            });
+            if (!mate) continue;
+            phases.splice(i + 1, 0, { players: clonePlayers(pl), ballPath: [{ x: 50, y: 50 }, { x: pl[mate].x, y: pl[mate].y }], ms: 500, pose: false, highlight: [], kickPass: true, ref: ph.ref });
+            i++;
+        }
+    }
+
     function planPlay(play, dP) {
         var res = resolvePlay(play, dP);
         var phases = (res.phases || []).map(function (ph) {
@@ -3248,16 +3548,19 @@
         if (play.kind === 'goal' || play.kind === 'own-goal') shapeGoal(phases, play, attack);
         phases = markSetPieces(phases, play, attack);
         addPlausibleOut(phases, play, attack);
+        addKickoffPass(phases);
+        if (typeof window !== 'undefined' && window.__plandbg && window.__plandbg.i === play.i) window.__plandbg.out = { attack: attack, flipped: simFlipped, ph: phases.map(function (q) { return { bp: q.ballPath, sp: q.setPiece || null, pose: q.pose }; }) };
         return { phases: phases, info: info };
     }
 
     /* ---------------- Sesiones 15-17: reanudaciones (banda, puerta, córner, centro), faltas con y sin
        barrera, fueras de juego, linieres y protestas. Todo ocurre dentro de la simulación del coreógrafo. ---- */
-    var simDbg = [], simSegT = 99, tlData = null;
+    var simDbg = [], simSegT = 99, tlData = null, simNextKind = null, simNextText = '', simNextSide = null;
+    var FK_GOAL_RE = /(falta a cargo|lanza la falta|lanzamiento de falta|la falta se cuela|golpeo de falta|libre directo|tiro libre|ejecuta la falta|falta directa|saca la falta|clava la falta|de falta)/;
     var simRestart = null, simEvents = [], simNs = 0, simAR = [], simGoalPlay = false, simAttackSide = 'home', simExiting = false;
-    var RESTART_PREP = { throw: 1.3, goalkick: 1.9, corner: 2.1, free: 1.5, wall: 2.8, offside: 1.8 };
+    var RESTART_PREP = { throw: 1.3, goalkick: 1.9, corner: 2.1, free: 1.5, wall: 2.8, offside: 1.8, penalty: 2.6 };
     var EVENT_LABEL = { throw: 'Saque de banda', goalkick: 'Saque de puerta', corner: 'Córner', free: 'Falta', wall: 'Falta · barrera',
-        offside: 'Fuera de juego', kickoff: 'Saque de centro', protest: 'Protestas', over: 'Por encima del larguero', appeal: '¿Fuera de juego?' };
+        offside: 'Fuera de juego', kickoff: 'Saque de centro', penalty: 'Penalti', protest: 'Protestas', over: 'Por encima del larguero', appeal: '¿Fuera de juego?' };
 
     function goalXOf(side) { return side === 'home' ? 100 : 0; }   // portería a la que ataca ese equipo
     function oppOf(side) { return side === 'home' ? 'away' : 'home'; }
@@ -3295,34 +3598,133 @@
         if (keys.length) simEvent('appeal', ball.x, ball.y, { side: side });
     }
 
+    // Una reanudación narrada que llega con otra automática pendiente del mismo tipo (el balón ya salió
+    // por ese sitio): es la misma; se adopta lo narrado sin repetirla desde otro punto.
+    function restartCompatible(r, sp) {
+        if (!r || !r.auto || r.type !== sp.type || r.side !== sp.side || sp.offside) return false;
+        if (sp.type === 'corner') return (r.spot.x > 50) === (sp.spot.x > 50);
+        return sp.type === 'throw' || sp.type === 'goalkick';
+    }
+
     function beginRestart(sp) {
+        if (simRestart && !sp.auto && restartCompatible(simRestart, sp)) {
+            var pr = simRestart;
+            pr.auto = false;
+            if (sp.kick) pr.kick = sp.kick;
+            if (sp.protest) startProtest(sp.protest, sp.protestN || 2);
+            pr.phase = motor.phase;
+            motor.action = null; motor.actions = [];
+            return;
+        }
         if (simRestart) restartKick(simRestart);
         var r = { type: sp.type, side: sp.side, spot: { x: clamp(sp.spot.x, -0.5, 100.5), y: clamp(sp.spot.y, -0.5, 100.5) }, t: 0, stage: 0,
-            wall: [], kick: sp.kick || null, prep: RESTART_PREP[sp.wallUp ? 'wall' : sp.type] || 1.6, auto: !!sp.auto, wallUp: !!sp.wallUp };
-        var opp = oppOf(sp.side), gx = goalXOf(sp.side);
-        r.taker = sp.type === 'goalkick' ? (gkOf(sp.side) || nearestOf(sideKeys(sp.side), r.spot.x, r.spot.y)) : nearestOf(sideKeys(sp.side, true), r.spot.x, r.spot.y);
-        var aim = r.kick ? { x: r.kick.x, y: r.kick.y } : (sp.type === 'throw' ? { x: r.spot.x, y: 50 } : { x: gx, y: 50 });
+            wall: [], kick: sp.kick || null, prep: RESTART_PREP[sp.wallUp ? 'wall' : sp.type] || 1.6, auto: !!sp.auto, wallUp: !!sp.wallUp,
+            offside: !!sp.offside, fixedSpot: !!sp.fixedSpot || !!sp.fkGoal, protest: sp.protest || null, protestN: sp.protestN || 2, born: simClock, hurry: !!sp.hurry, hold: !!sp.hold };
+        if (r.hurry) r.prep = Math.min(r.prep, 1.4);   // va con retraso: se coloca y se saca rápido
+        // Una falta a favor no se saca dentro del área rival (eso sería penalti): se pita en la frontal.
+        if (r.type === 'free' && !r.offside) {
+            var fgx0 = goalXOf(r.side), fdir0 = fgx0 === 100 ? 1 : -1;
+            var dLine = Math.abs(fgx0 - r.spot.x) * M_X, dLat = Math.abs(r.spot.y - 50) * M_Y;
+            if (dLine < 18.5 && dLat < 21) {
+                r.spot = { x: fgx0 - fdir0 * (18.5 + rng() * 4) / M_X, y: clamp(r.spot.y, 50 - 18 / M_Y, 50 + 18 / M_Y) };
+                var fdd = Math.hypot((fgx0 - r.spot.x) * M_X, (50 - r.spot.y) * M_Y);
+                r.wallUp = fdd < 32 && Math.abs(r.spot.y - 50) < 30;
+                r.prep = RESTART_PREP[r.wallUp ? 'wall' : 'free'] || 1.6; if (r.hurry) r.prep = Math.min(r.prep, 1.4);
+                if (r.kick && !r.kick.net && r.kick.kind !== 'shot' && r.kick.kind !== 'over') r.kick = null;
+            } else if (dLine < 6) r.spot.x = fgx0 - fdir0 * 6 / M_X;
+        }
+        var inField = ball.x >= -0.2 && ball.x <= 100.2 && ball.y >= -0.2 && ball.y <= 100.2;
+        // Lo narrado sale de lo que acaba de pasar: antes de un córner, saque de banda o de puerta el balón
+        // sale de verdad por ese sitio; una falta se pita donde está el balón (se lleva hasta allí).
+        if (!r.auto && !r.offside && /^(corner|throw|goalkick)$/.test(r.type)) {
+            if (sp.optional && inField && mDist(ball.x, ball.y, r.spot.x, r.spot.y) > 30) return;   // saque de banda inventado: solo si cuadra
+            r.stage = -1; r.need = 'out';
+            if (r.type === 'throw' && inField && Math.abs(ball.x - r.spot.x) * M_X > 16) {
+                r.spot = { x: clamp(ball.x + (r.spot.x > ball.x ? 1 : -1) * 6 / M_X, 2, 98), y: ball.y < 50 ? 0 : 100 };
+                if (r.kick && mDist(r.kick.x, r.kick.y, r.spot.x, r.spot.y) > 26) r.kick = null;
+            }
+            if (r.type === 'throw' && inField) r.spot.y = ball.y < 50 ? 0 : 100;
+            if (r.type === 'corner' && inField) r.spot.y = ball.y < 50 ? 0.6 : 99.4;
+        } else if (!r.auto && !r.offside && r.type === 'penalty') {
+            // El penalti se comete dentro del área: el balón llega allí, pita el árbitro y se coloca en el punto.
+            var pgx = goalXOf(r.side), pdir2 = pgx === 100 ? 1 : -1;
+            r.foulAt = { x: pgx - pdir2 * (6 + rng() * 7) / M_X, y: clamp(inField ? ball.y : 50, 50 - 9 / M_Y, 50 + 9 / M_Y) };
+            if (!inField || mDist(ball.x, ball.y, r.foulAt.x, r.foulAt.y) > 4) { r.stage = -1; r.need = 'approach'; }
+        } else if (!r.auto && !r.offside && r.type === 'free' && inField && mDist(ball.x, ball.y, r.spot.x, r.spot.y) > 6) {
+            r.stage = -1; r.need = 'approach';
+        }
+        if (ball.state === 'held' && r.stage === 0) { ball.state = 'free'; ball.owner = null; }
+        motor.action = null; motor.actions = [];
+        r.phase = motor.phase;
+        simRestart = r;
+        if (r.stage === 0) placeRestart(r);
+    }
+
+    // Colocación de la reanudación (con el balón ya donde toca): lanzador, barrera, área, árbitro.
+    function placeRestart(r) {
+        r.from = { x: ball.x, y: ball.y }; r.whistleNs = simNs;
+        var opp = oppOf(r.side), gx = goalXOf(r.side);
+        r.taker = r.type === 'goalkick' ? (gkOf(r.side) || nearestOf(sideKeys(r.side), r.spot.x, r.spot.y)) : nearestOf(sideKeys(r.side, true), r.spot.x, r.spot.y);
+        var aim = r.kick ? { x: r.kick.x, y: r.kick.y } : (r.type === 'throw' ? { x: r.spot.x, y: 50 } : { x: gx, y: 50 });
         var ux = (aim.x - r.spot.x) * M_X, uy = (aim.y - r.spot.y) * M_Y, ul = Math.max(0.1, Math.hypot(ux, uy));
         ux /= ul; uy /= ul;
-        r.takerAt = sp.type === 'throw' ? { x: r.spot.x, y: r.spot.y < 50 ? -0.9 : 100.9 } : { x: r.spot.x - ux * 1.3 / M_X, y: r.spot.y - uy * 1.3 / M_Y };
+        r.takerAt = r.type === 'throw' ? { x: r.spot.x, y: r.spot.y < 50 ? -0.5 : 100.5 } : { x: r.spot.x - ux * 1.3 / M_X, y: r.spot.y - uy * 1.3 / M_Y };
         if (r.taker) setMoverTarget(playerState[r.taker], r.takerAt.x, r.takerAt.y, 0.9, { involved: true });
         if (r.wallUp) {
             var gdx = (gx - r.spot.x) * M_X, gdy = (50 - r.spot.y) * M_Y, gl = Math.max(0.1, Math.hypot(gdx, gdy));
             var wx = r.spot.x + gdx / gl * 9.15 / M_X, wy = r.spot.y + gdy / gl * 9.15 / M_Y;
             var px = -gdy / gl, py = gdx / gl;
-            var defs = sideKeys(opp, true).sort(byDistTo(wx, wy)).slice(0, 4);
-            defs.forEach(function (k, i) { var o = (i - 1.5) * 1.9; setMoverTarget(playerState[k], wx + px * o / M_X, wy + py * o / M_Y, 1.3, { involved: true }); });
+            // Barrera de 3 o 4 (más cerca, más jugadores), hombro con hombro tal y como se dibujan: sin montarse unos encima de otros.
+            var wN = gl < 24 ? 4 : 3, wGap = 3.8 * sepFactor();
+            var defs = sideKeys(opp, true).sort(byDistTo(wx, wy)).slice(0, wN);
+            r.wallT = [];
+            defs.forEach(function (k, i) {
+                var o = (i - (defs.length - 1) / 2) * wGap, tx = clamp(wx + px * o / M_X, 0.5, 99.5), ty = clamp(wy + py * o / M_Y, 0.5, 99.5);
+                setMoverTarget(playerState[k], tx, ty, 1.3, { involved: true });
+                r.wallT.push({ k: k, x: tx, y: ty });
+            });
             r.wall = defs; r.wallAt = { x: wx, y: wy };
             var gk = gkOf(opp);
             if (gk) setMoverTarget(playerState[gk], gx === 100 ? 99 : 1, clamp(50 + (r.spot.y - 50) * 0.12, 46, 54), 1.2, { involved: true });
             // atacantes esperando el rechace en el área
             var bxA = gx === 100 ? 90 : 10;
-            sideKeys(sp.side, true).filter(function (k) { return k !== r.taker; }).sort(byDistTo(bxA, 50)).slice(0, 3)
-                .forEach(function (k, i) { setMoverTarget(playerState[k], bxA, 40 + i * 10, 1.6, { involved: true }); });
+            sideKeys(r.side, true).filter(function (k) { return k !== r.taker; }).sort(byDistTo(bxA, 50)).slice(0, 3)
+                .forEach(function (k, i) { setMoverTarget(playerState[k], bxA, 40 + i * 10, 1.6, { involved: true }); r.waitK = (r.waitK || []).concat([k]); });
+            // Nadie más se mete encima de la barrera: los demás se apartan a un lado.
+            Object.keys(playerState).forEach(function (k) {
+                if (defs.indexOf(k) >= 0 || k === r.taker) return;
+                var st = playerState[k];
+                if (st.leaving || st.pos === 'GK') return;
+                var tx = st.tx != null ? st.tx : st.x, ty = st.ty != null ? st.ty : st.y;
+                r.wallT.forEach(function (w) {
+                    var dx = (tx - w.x) * M_X, dy = (ty - w.y) * M_Y, dd = Math.hypot(dx, dy), need = 3.9 * sepFactor();
+                    if (dd < need) {
+                        if (dd < 0.2) { dx = px; dy = py; dd = 1; }
+                        tx = clamp(w.x + dx / dd * need / M_X, 0.5, 99.5); ty = clamp(w.y + dy / dd * need / M_Y, 0.5, 99.5);
+                    }
+                });
+                if (tx !== st.tx || ty !== st.ty) { setMoverTarget(st, tx, ty, 1.2, { involved: true }); st.wallAside = { x: tx, y: ty }; }
+            });
         }
-        if (sp.type === 'corner') {
+        if (r.type === 'penalty') {
+            // Penalti: el portero en la línea, el lanzador tras el balón y todos los demás fuera del área y de la media luna.
+            var pdir = gx === 100 ? 1 : -1, edgeX = gx - pdir * 17.6 / M_X;
+            Object.keys(playerState).forEach(function (k) {
+                var st = playerState[k];
+                if (k === r.taker || st.leaving) return;
+                if (st.pos === 'GK' && st.side === opp) { setMoverTarget(st, gx === 100 ? 99.4 : 0.6, 50, 1.0, { involved: true }); return; }
+                if (st.pos === 'GK') return;
+                var inBox = (st.x - edgeX) * pdir > -1.2 && Math.abs(st.y - 50) < 32;
+                var tx = inBox ? edgeX - pdir * (1.5 + rng() * 3) / M_X : st.x;
+                var ty = inBox ? clamp(st.y, 22, 78) : st.y;
+                // la media luna: a más de 9,15 m del punto
+                if (mDist(tx, ty, r.spot.x, r.spot.y) < 10) ty = ty < 50 ? Math.min(ty, 50 - 10.5 / M_Y) : Math.max(ty, 50 + 10.5 / M_Y);
+                setMoverTarget(st, tx, ty, 1.3, { involved: inBox });
+            });
+        }
+        if (r.type === 'corner') {
             var bx = gx === 100 ? 93 : 7, dirIn = gx === 100 ? -1 : 1;
-            sideKeys(sp.side, true).filter(function (k) { return k !== r.taker; }).sort(byDistTo(bx, 50)).slice(0, 4)
+            sideKeys(r.side, true).filter(function (k) { return k !== r.taker; }).sort(byDistTo(bx, 50)).slice(0, 4)
                 .forEach(function (k, i) { setMoverTarget(playerState[k], bx + dirIn * (i % 2) * 3, 38 + i * 8, 1.7, { involved: true }); });
             sideKeys(opp, true).sort(byDistTo(bx, 50)).slice(0, 4)
                 .forEach(function (k, i) { setMoverTarget(playerState[k], bx - dirIn * 1.5, 40 + i * 6.5, 1.7, { involved: true }); });
@@ -3331,21 +3733,175 @@
         var rx = clamp(r.spot.x + (50 - r.spot.x) * 0.35, 6, 94), ry = clamp(r.spot.y + (50 - r.spot.y) * 0.35 + 6, 8, 92);
         refState.tx = rx; refState.ty = ry; refState.hx = rx; refState.hy = ry;
         refState.spd = clamp(mDist(refState.x, refState.y, rx, ry) / 1.6, 1.5, 7);
-        if (sp.offside) { var ai = r.spot.x >= 50 ? 0 : 1; if (simAR[ai]) simAR[ai].flagUntil = simClock + 3.0; }
-        if (sp.protest) startProtest(sp.protest, sp.protestN || 2);
+        if (r.offside) { var ai = r.spot.x >= 50 ? 0 : 1; if (simAR[ai]) simAR[ai].flagUntil = simClock + 3.0; }
+        if (r.protest) startProtest(r.protest, r.protestN || 2);
         // El fuera de juego se señala al momento; el resto se rotula cuando el balón está colocado.
-        r.evType = sp.offside ? 'offside' : (r.wallUp ? 'wall' : sp.type);
-        if (sp.offside) { simEvent('offside', r.spot.x, r.spot.y, { side: sp.side }); r.evDone = true; }
+        r.evType = r.offside ? 'offside' : (r.wallUp ? 'wall' : r.type);
+        if (r.offside) { simEvent('offside', r.spot.x, r.spot.y, { side: r.side }); r.evDone = true; }
         if (ball.state === 'held') { ball.state = 'free'; ball.owner = null; }
         ball.lock = true;
         motor.action = null; motor.actions = [];
         r.phase = motor.phase;
-        simRestart = r;
+    }
+
+    // Antes de la reanudación: el balón sale por donde se va a sacar, o llega a donde se pita la falta.
+    function stepRestartPre(r, dt) {
+        var outNow = ball.x < -0.2 || ball.x > 100.2 || ball.y < -0.2 || ball.y > 100.2;
+        function go() { r.stage = 0; r.t = 0; r.rest = 0; placeRestart(r); }
+        if (r.need === 'out') {
+            if (!r.launched) {
+                if (ball.state === 'flight' && r.t < 1.4) return;
+                // ¿Salió por donde se va a sacar? (la misma línea de fondo, la misma banda y cerca)
+                var outOk = outNow && (r.type === 'throw' ? ((ball.y < 50) === (r.spot.y < 50) && (ball.y < -0.2 || ball.y > 100.2) && Math.abs(ball.x - r.spot.x) * M_X < 12)
+                    : ((ball.x < 50) === (r.spot.x < 50) && (ball.x < -0.2 || ball.x > 100.2) && (r.type === 'goalkick' || (ball.y < 50) === (r.spot.y < 50))));
+                if (outOk && ball.state !== 'flight') { if (r.type === 'throw') r.spot.x = clamp(ball.x, 1, 99); go(); return; }
+                if (outNow && ball.state !== 'flight' && !r.preDone) {
+                    // El balón está fuera en otro sitio (jugada anterior): vuelve al juego desde allí (saque de puerta o de banda rápido)
+                    // y la jugada llega luego hasta donde sale de verdad.
+                    var bk = ball.x < -0.2 || ball.x > 100.2 ? { x: ball.x > 50 ? 94.8 : 5.2, y: clamp(ball.y, 38, 62) } : { x: clamp(ball.x, 2, 98), y: ball.y < 50 ? 0.5 : 99.5 };
+                    if (ball.state === 'held') { ball.state = 'free'; ball.owner = null; }
+                    launchBall(bk, 'reset', null); ball.fl.keep = true; r.preDone = 1; return;
+                }
+                if (r.preDone === 1 && ball.state !== 'flight') {
+                    var gxr = goalXOf(r.side), dr = gxr === 100 ? 1 : -1;
+                    var mid = { x: clamp(gxr - dr * (28 + rng() * 10) / M_X, 8, 92), y: r.spot.y < 50 ? 25 + rng() * 15 : 60 + rng() * 15 };
+                    var kk = nearestOf(sideKeys(r.side === 'home' ? 'away' : 'home').concat(sideKeys(r.side)), ball.x, ball.y);
+                    if (kk) { var ks = playerState[kk]; ks.tx = ks.hx = ball.x; ks.ty = ks.hy = ball.y; ks.spd = Math.max(ks.spd || 0, 6); if (mDist(ks.x, ks.y, ball.x, ball.y) > 1.6 && r.t < 4) return; }
+                    var rv = nearestOf(sideKeys(r.side, true), mid.x, mid.y);
+                    launchBall(mid, 'lofted', rv); if (rv) setMoverTarget(playerState[rv], mid.x, mid.y, 1.0, { involved: true });
+                    r.preDone = 2; r.t = Math.min(r.t, 0.2); return;
+                }
+                if (r.preDone === 2 && ball.state === 'flight') return;
+                var to;
+                if (r.type === 'corner') to = { x: r.spot.x > 50 ? 101.6 : -1.6, y: r.spot.y < 50 ? 5 + rng() * 14 : 81 + rng() * 14 };
+                else if (r.type === 'goalkick') to = { x: r.spot.x > 50 ? 101.6 : -1.6, y: rng() < 0.5 ? 22 + rng() * 18 : 60 + rng() * 18 };
+                else to = { x: clamp(r.spot.x + (rng() - 0.5) * 3, 1, 99), y: r.spot.y < 50 ? -1.6 : 101.6 };
+                if (ball.state === 'held') { ball.state = 'free'; ball.owner = null; }
+                var far = mDist(ball.x, ball.y, to.x, to.y);
+                launchBall(to, far > 30 ? 'lofted' : 'ground', null);
+                ball.fl.keep = true;
+                // Último toque: el rival del que va a sacar (despeje o desvío de un defensa en el córner).
+                ball.lastSide = oppOf(r.side);
+                r.launched = true;
+                return;
+            }
+            if (ball.state !== 'flight') { r.rest = (r.rest || 0) + dt; if (r.rest > 0.45) go(); }
+            if (r.t > 6 && !r.preDone) go();
+            if (r.t > 9) go();
+            return;
+        }
+        // Falta: el balón llega a donde se comete y entonces pita el árbitro (el penalti, en el área).
+        var tgt = r.foulAt || r.spot;
+        var dB = mDist(ball.x, ball.y, tgt.x, tgt.y);
+        if (ball.state !== 'flight' && dB <= 3.5) { if (!r.foulAt) r.spot = { x: clamp(ball.x, 1, 99), y: clamp(ball.y, 1, 99) }; go(); return; }
+        if (!r.launched && (ball.state !== 'flight' || r.t > 1.4)) {
+            var recv = nearestOf(sideKeys(r.side, true), tgt.x, tgt.y);
+            if (ball.state === 'held') { ball.state = 'free'; ball.owner = null; }
+            launchBall({ x: tgt.x, y: tgt.y }, dB > 30 ? 'lofted' : 'ground', recv);
+            if (recv) setMoverTarget(playerState[recv], tgt.x, tgt.y, 0.8, { involved: true });
+            var fouler = nearestOf(sideKeys(oppOf(r.side), true), tgt.x, tgt.y);
+            if (fouler) setMoverTarget(playerState[fouler], tgt.x + (r.side === 'home' ? 1.2 : -1.2), tgt.y, 0.8, { involved: true });
+            r.launched = true;
+            return;
+        }
+        if (r.t > 4.5 && (ball.state !== 'flight' || r.t > 7.5)) {
+            // No llegó: se pita donde está el balón (salvo si el punto está fijado por el texto: se lleva hasta allí parado).
+            if (ball.state !== 'flight' && !outNow && !r.foulAt && !r.fixedSpot) r.spot = { x: clamp(ball.x, 1, 99), y: clamp(ball.y, 1, 99) };
+            go();
+        }
+    }
+
+    // Datos de la reanudación para el auditor: barrera, punto de origen (falta o salida del balón).
+    function restartEvExtra(r) {
+        var ex = { side: r.side, t: Math.round(r.t * 10) / 10 };
+        if (r.wallUp && r.wallAt) { var wv = simVisOf(r.wallAt.x, r.wallAt.y); ex.wallAt = { x: wv.x, y: wv.y }; ex.wall = r.wall.slice(); }
+        if (r.from) { var fv = simVisOf(r.from.x, r.from.y); ex.from = { x: fv.x, y: fv.y }; }
+        if (r.whistleNs != null) ex.whistle = r.whistleNs;
+        if (r.need) ex.need = r.need;
+        return ex;
+    }
+
+    // Mientras se forma la barrera, nadie más (compañero, rival que espera el rechace...) se queda encima de ella.
+    // Nadie (salvo la barrera y el lanzador) a menos de 3,4 m de un hueco de la barrera.
+    function wallCrowded(r) {
+        var need = 3.4 * sepFactor();
+        return Object.keys(playerState).some(function (k) {
+            if (r.wall.indexOf(k) >= 0 || k === r.taker) return false;
+            var st = playerState[k]; if (st.leaving || st.pos === 'GK') return false;
+            return r.wallT.some(function (w) { return mDist(st.x, st.y, w.x, w.y) < need; });
+        });
+    }
+    // Los que van al área rodean la barrera en vez de atravesarla: primero a un lado de la barrera y luego a su sitio.
+    function wallDetours(r) {
+        var need = 4.2 * sepFactor(), w0 = r.wallT[0], w1 = r.wallT[r.wallT.length - 1];
+        var wx = (w1.x - w0.x) * M_X, wy = (w1.y - w0.y) * M_Y, wl = Math.max(0.1, Math.hypot(wx, wy)); wx /= wl; wy /= wl;
+        Object.keys(playerState).forEach(function (k) {
+            if (r.wall.indexOf(k) >= 0 || k === r.taker) return;
+            var st = playerState[k]; if (st.leaving || st.pos === 'GK') return;
+            if (st.wallDet) {
+                if (mDist(st.x, st.y, st.tx, st.ty) < 1.2) { st.tx = st.hx = st.wallDet.x; st.ty = st.hy = st.wallDet.y; st.wallDet = null; }
+                return;
+            }
+            var ax = st.x, ay = st.y, bx = st.tx, by = st.ty;
+            var sx = (bx - ax) * M_X, sy = (by - ay) * M_Y, sl2 = sx * sx + sy * sy;
+            if (sl2 < 4) return;
+            var hit = r.wallT.some(function (w) {
+                var u = clamp((((w.x - ax) * M_X) * sx + ((w.y - ay) * M_Y) * sy) / sl2, 0, 1);
+                var cx = ax + (bx - ax) * u, cy = ay + (by - ay) * u;
+                return u > 0.02 && mDist(cx, cy, w.x, w.y) < need;
+            });
+            if (!hit) return;
+            // el extremo de la barrera más a mano, y un paso más allá
+            var e0 = mDist(ax, ay, w0.x, w0.y) + mDist(bx, by, w0.x, w0.y), e1 = mDist(ax, ay, w1.x, w1.y) + mDist(bx, by, w1.x, w1.y);
+            var we = e0 < e1 ? w0 : w1, sg = e0 < e1 ? -1 : 1;
+            var px = clamp(we.x + sg * wx * (need + 0.6) / M_X, 1, 99), py = clamp(we.y + sg * wy * (need + 0.6) / M_Y, 1, 99);
+            st.wallDet = { x: bx, y: by };
+            st.tx = st.hx = px; st.ty = st.hy = py; st.pend = null;
+        });
+    }
+
+    function wallClear(r) {
+        var need = 4.0 * sepFactor();
+        Object.keys(playerState).forEach(function (k) {
+            if (r.wall.indexOf(k) >= 0 || k === r.taker) return;
+            var st = playerState[k];
+            if (st.leaving || st.pos === 'GK') return;
+            var tx = st.tx, ty = st.ty, moved = false;
+            for (var it = 0; it < 2; it++) r.wallT.forEach(function (w) {
+                var dx = (tx - w.x) * M_X, dy = (ty - w.y) * M_Y, dd = Math.hypot(dx, dy);
+                if (dd < need) { if (dd < 0.2) { dx = 0; dy = 1; dd = 1; } tx = clamp(w.x + dx / dd * need / M_X, 0.5, 99.5); ty = clamp(w.y + dy / dd * need / M_Y, 0.5, 99.5); moved = true; }
+            });
+            if (moved) { st.tx = tx; st.ty = ty; st.hx = tx; st.hy = ty; st.pend = null; st.spd = Math.max(st.spd || 0, 4.5); if (!r.waitK) r.waitK = []; if (r.waitK.indexOf(k) < 0) r.waitK.push(k); }
+        });
+        // Alrededor de la barrera, nadie pegado a nadie (marcadores y atacantes a un paso, no encima).
+        var sep = 3.7 * sepFactor(), wa = r.wallAt;
+        var near = Object.keys(playerState).filter(function (k) {
+            var st = playerState[k];
+            return st && !st.leaving && st.pos !== 'GK' && k !== r.taker && mDist(st.tx, st.ty, wa.x, wa.y) < 11;
+        });
+        for (var it2 = 0; it2 < 2; it2++) near.forEach(function (ka, ia) {
+            near.forEach(function (kb, ib) {
+                if (ib <= ia) return;
+                var A = playerState[ka], B = playerState[kb];
+                var mv = r.wall.indexOf(kb) >= 0 ? (r.wall.indexOf(ka) >= 0 ? null : A) : B;   // la barrera no se mueve
+                if (!mv) return;
+                var fix = mv === A ? B : A;
+                var dx = (mv.tx - fix.tx) * M_X, dy = (mv.ty - fix.ty) * M_Y, dd = Math.hypot(dx, dy);
+                if (dd >= sep) return;
+                if (dd < 0.2) { dx = (mv.tx - wa.x) * M_X || 1; dy = (mv.ty - wa.y) * M_Y; dd = Math.hypot(dx, dy) || 1; }
+                var tx = clamp(fix.tx + dx / dd * sep / M_X, 0.5, 99.5), ty = clamp(fix.ty + dy / dd * sep / M_Y, 0.5, 99.5);
+                mv.tx = tx; mv.ty = ty; mv.hx = tx; mv.hy = ty; mv.pend = null; mv.spd = Math.max(mv.spd || 0, 4.5);
+                var km = mv === A ? ka : kb;
+                if (!r.waitK) r.waitK = [];
+                if (r.waitK.indexOf(km) < 0) r.waitK.push(km);
+            });
+        });
     }
 
     function stepRestart(dt) {
         var r = simRestart;
         r.t += dt;
+        if (r.stage < 0) { stepRestartPre(r, dt); return; }
         var ts = r.taker ? playerState[r.taker] : null;
         if (r.stage === 0) {
             var dBall = mDist(ball.x, ball.y, r.spot.x, r.spot.y);
@@ -3358,16 +3914,30 @@
                 ball.fl.keep = true;
             }
             if (ts) { ts.tx = r.takerAt.x; ts.ty = r.takerAt.y; ts.hx = ts.tx; ts.hy = ts.ty; ts.pend = null; ts.spd = Math.max(ts.spd || 0, 5.5); }
-            var ready = ball.state !== 'flight' && dBall <= 1.0 && (!ts || mDist(ts.x, ts.y, r.takerAt.x, r.takerAt.y) < 1.6) && r.t >= r.prep;
-            if (ready || r.t > r.prep + 4) {
+            // La barrera se coloca entera antes de que se lance (cada uno en su sitio, sin montarse).
+            var wallOk = !r.wallT || r.wallT.every(function (w) {
+                var st = playerState[w.k];
+                if (!st) return true;
+                st.tx = w.x; st.ty = w.y; st.hx = w.x; st.hy = w.y; st.pend = null; st.spd = Math.max(st.spd || 0, 6.5);
+                return mDist(st.x, st.y, w.x, w.y) < 0.3;
+            });
+            var wallFormed = wallOk;
+            if (r.wallT) { wallClear(r); wallDetours(r); }
+            // ... y los que se colocan alrededor (los del rechace, los que se apartan) ya han llegado: nadie cruza la barrera al lanzar.
+            if (wallOk && r.waitK) wallOk = r.waitK.every(function (k) { var st = playerState[k]; if (!st) return true; var fx = st.wallDet ? st.wallDet.x : st.tx, fy = st.wallDet ? st.wallDet.y : st.ty; return mDist(st.x, st.y, fx, fy) < 1.0; });
+            if (wallOk && r.wallT) wallOk = !wallCrowded(r);
+            var ready = ball.state !== 'flight' && dBall <= 1.0 && (!ts || mDist(ts.x, ts.y, r.takerAt.x, r.takerAt.y) < 1.6) && r.t >= r.prep && wallOk;
+            if (!r.hold && !r.pauseHold && (ready || r.t > r.prep + (r.wallUp ? ((!wallFormed || (r.wallT && wallCrowded(r))) ? 9 : 4.5) : (r.hurry ? 1.6 : 4)))) {
+                if (r.wallT) Object.keys(playerState).forEach(function (k) { var st = playerState[k]; if (st.wallDet) { st.tx = st.hx = st.wallDet.x; st.ty = st.hy = st.wallDet.y; st.wallDet = null; } });
                 r.stage = 1; r.t1 = r.t;
-                if (!r.evDone) { simEvent(r.evType, r.spot.x, r.spot.y, { side: r.side }); r.evDone = true; }
+                if (!r.evDone) { simEvent(r.evType, r.spot.x, r.spot.y, restartEvExtra(r)); r.evDone = true; }
                 if (ts && r.type === 'throw') { ts.throwing = true; ball.state = 'held'; ball.owner = r.taker; }
             }
         } else if (r.t - r.t1 > (r.type === 'throw' ? 0.75 : 0.45)) restartKick(r);
     }
 
     function restartKick(r) {
+        if (r.stage < 0) { simRestart = null; ball.lock = false; if (ball.fl) ball.fl.keep = false; return; }   // aún no había salido / llegado: se abandona
         var to = null, kind = 'ground', recv = null;
         var gx = goalXOf(r.side), dir = gx === 100 ? 1 : -1;
         var mates = sideKeys(r.side, true).filter(function (k) { return k !== r.taker; });
@@ -3382,7 +3952,7 @@
         if (!to) to = { x: fromAtt(55, r.side), y: 50 };
         if (recv && playerState[recv]) setMoverTarget(playerState[recv], to.x, to.y, 0.8, { involved: true });
         var ts = r.taker ? playerState[r.taker] : null;
-        if (!r.evDone) { simEvent(r.evType, r.spot.x, r.spot.y, { side: r.side }); r.evDone = true; }
+        if (!r.evDone) { simEvent(r.evType, r.spot.x, r.spot.y, restartEvExtra(r)); r.evDone = true; }
         if (ts) ts.throwing = false;
         if (ball.state === 'held') { ball.state = 'free'; ball.owner = null; }
         simRestart = null;
@@ -3390,6 +3960,7 @@
         ball.lastSide = r.side;
         if (r.type === 'throw') ball.fl.H = 0.45;
         if (r.kick && r.kick.net) ball.fl.net = true;
+        ball.fl.born = r.born;   // lanzamiento de una reanudación (puede venir de la jugada anterior)
         if (r.kick && r.kick.kind === 'over') ball.fl.H = 2.6;
         // Hecha la reanudación, la fase acaba enseguida y el juego sigue (nadie se queda congelado).
         if (motor.phase === r.phase) { motor.actions = []; motor.action = null; if (motor.phase) motor.phaseDur = Math.min(motor.phaseDur, motor.phaseT + 0.8); }
@@ -3401,7 +3972,7 @@
         var x = ball.x, y = ball.y;
         var outSide = y < -0.2 || y > 100.2, outEnd = x < -0.2 || x > 100.2;
         if (!outSide && !outEnd) return;
-        if (outEnd && !outSide && simGoalPlay && Math.abs(y - 50) < 6.5) { ball.goalNet = true; return; }   // gol: el balón se queda en la red
+        if (outEnd && !outSide && simGoalPlay && Math.abs(y - 50) < 6.5 && (x > 50) === (goalXOf(simAttackSide) === 100)) { ball.goalNet = true; return; }   // gol: el balón se queda en la red (en la portería a la que se ataca)
         var last = ball.lastSide || simAttackSide;
         if (outEnd) {
             var defSide = x > 50 ? 'away' : 'home', atkSide = oppOf(defSide);
@@ -3428,6 +3999,13 @@
         }
         lines.forEach(function (tx, i) {
             var a = simAR[i];
+            // Con un saque de banda en su banda, el linier se aparta para no taparse con el que saca.
+            var rT = simRestart && simRestart.type === 'throw' && simRestart.takerAt;
+            if (rT && (i === 0) === (rT.y < 50) && Math.abs(tx - rT.x) < 8) {
+                var away = tx >= rT.x ? 1 : -1;
+                if (rT.x + away * 8 > 99 || rT.x + away * 8 < 1) away = -away;
+                tx = rT.x + away * 8;
+            }
             a.tx = tx; a.ty = i === 0 ? -2.3 : 101.9;
             a.spd = clamp(Math.abs(tx - a.x) * M_X * 1.3, 0.5, 7);
             stepMover(a, dt, 1);
@@ -3435,12 +4013,23 @@
     }
 
     // Jugadas narradas: córner, saque de puerta, de banda, faltas (con o sin barrera), fuera de juego, protestas.
+    // Equipo que recibe la falta según el texto («X derriba a Y», «falta de X sobre Y»).
+    function fouledSideOf(play) {
+        var raw = String(play.text || ''), m = raw.match(/(?:derriba a|sobre|zancadilla a|agarra a|frena a|arrolla a)\s+([^\n.]+)/i);
+        if (!m) return null;
+        var after = m[1], side = null;
+        Object.keys(playerState).forEach(function (k) { var nm = k.slice(k.indexOf(':') + 1); if (!side && nm && after.indexOf(nm) === 0) side = playerState[k].side; });
+        return side;
+    }
+
+    var ADVANTAGE_RE = /deja seguir|(senala|marca|concede|aplica|da) (la )?ventaja|ventaja!/;
     function markSetPieces(phases, play, attack) {
         if (!phases.length) return phases;
         var t = foldText(play.text);
         var opp = oppOf(attack);
         var p0, i;
-        if (play.kind === 'corner') {
+        // Córner que es el desenlace de un remate desviado: sale solo al desviarse (no hay saque narrado en esta jugada).
+        if (play.kind === 'corner' && shotOutcome(play) !== 'save-corner') {
             for (i = 0; i < phases.length; i++) {
                 p0 = (phases[i].ballPath || [])[0];
                 if (p0 && (p0.x > 93 || p0.x < 7) && (p0.y < 12 || p0.y > 88)) {
@@ -3449,6 +4038,24 @@
                         kick: nx ? { x: nx.x, y: nx.y, kind: 'lofted' } : null };
                     phases[i].ms = Math.max(phases[i].ms || 700, 2600);
                     break;
+                }
+            }
+            // «Tras el despeje, X derriba a Y...»: el córner acaba en falta, que se pita donde está el balón.
+            if (/derriba a|comete (una )?falta|zancadilla|agarra a|falta de [^.\n]{2,40} sobre|senala falta|pita falta|falta en (el )?ataque/.test(t)) {
+                var cl = phases[phases.length - 1], clp = cl.ballPath || [], ce = null;
+                for (var ci = clp.length - 1; ci >= 0; ci--) if (clp[ci].x > 0 && clp[ci].x < 100 && clp[ci].y > 0 && clp[ci].y < 100) { ce = clp[ci]; break; }
+                if (ce) {
+                    var cfs = fouledSideOf(play) || opp, cgx = goalXOf(cfs), cdir = cgx === 100 ? 1 : -1;
+                    var cspot = { x: clamp(ce.x, 3, 97), y: clamp(ce.y, 4, 96) };
+                    if (/borde del area|frontal|cerca del area/.test(t)) cspot = { x: cgx - cdir * (19 + rng() * 5) / M_X, y: 36 + rng() * 28 };
+                    else if (cfs !== attack) cspot = { x: clamp(cspot.x, 8, 92), y: cspot.y };
+                    var cdist = Math.hypot((cgx - cspot.x) * M_X, (50 - cspot.y) * M_Y);
+                    var cwall = cdist < 32 && Math.abs(cspot.y - 50) < 30;
+                    var ckick = null;
+                    if (cwall) { var cs = rng() < 0.5 ? -1 : 1; ckick = /porter|ataja|despeja|desvi/.test(t.split('derriba')[1] || '') ? { x: cgx - cdir * 1.2, y: 50 + cs * 2.5, kind: 'shot' } : { x: cgx + cdir * 1.8, y: 50 + cs * (5.6 + rng() * 3), kind: 'shot', net: true }; }
+                    clp.push({ x: cspot.x, y: cspot.y });
+                    phases.push({ players: clonePlayers(cl.players), ballPath: [{ x: cspot.x, y: cspot.y }], ms: cwall ? 3600 : 2400, highlight: cl.highlight, ref: null,
+                        setPiece: { type: 'free', side: cfs, spot: cspot, wallUp: cwall, kick: ckick, protest: rng() < 0.5 ? oppOf(cfs) : null, protestN: 2 } });
                 }
             }
             return phases;
@@ -3466,36 +4073,105 @@
         var offsideCall = /fuera de juego|bandera|banderin/.test(t) && /(levanta(do)? la bandera|levanta el banderin|senala (el )?fuera de juego|fuera de juego senalado|pita (el )?fuera de juego|anulado por fuera de juego)/.test(t) && !/no levanta/.test(t);
         var appeal = !offsideCall && /(pide fuera de juego|me parecio fuera de juego|desastre de fuera de juego|busco el fuera de juego|en claro fuera de juego)/.test(t);
         var isFoul = play.kind === 'foul' || ((play.kind === 'yellow' || play.kind === 'red') && /falta|derrib|entrada|zancadill|agarr|codazo|plancha|pisot|agrede/.test(t));
+        // «El árbitro deja seguir. ¡Ventaja!»: no se para el juego (ni falta ni barrera).
+        if (isFoul && ADVANTAGE_RE.test(t)) isFoul = false;
         if (!isFoul && /^(clearance|play|counter|box|injury)$/.test(play.kind) && /(falta (peligrosa|muy cerca|cerca|de |sobre)|comete (una )?falta|derriba a)/.test(t)) isFoul = true;
         var first = phases[0], lp = first.ballPath || [], fp = lp[lp.length - 1] || { x: 50, y: 50 };
         if (offsideCall) {
             // El asistente levanta la bandera y saca el equipo que defendía, desde donde estaba el adelantado.
             var spotO = { x: clamp(fp.x, 3, 97), y: clamp(fp.y, 4, 96) };
             first.ms = Math.min(first.ms || 700, 900);
+            // Fuera de juego de verdad: en el momento del pase el receptor está por delante del penúltimo defensor.
+            var opl = first.players || {}, ogx = goalXOf(attack), odir = ogx === 100 ? 1 : -1;
+            var isGkK = function (k) { var st = playerState[k]; return st ? st.pos === 'GK' : false; };
+            var lp0 = lp[0] || fp, passer = null, receiver = null, pd = 1e9, rd = 1e9;
+            Object.keys(opl).forEach(function (k) {
+                if (k.split(':')[0] !== attack || isGkK(k)) return;
+                var d0 = mDist(opl[k].x, opl[k].y, lp0.x, lp0.y);
+                if (d0 < pd) { pd = d0; passer = k; }
+            });
+            Object.keys(opl).forEach(function (k) {
+                if (k.split(':')[0] !== attack || isGkK(k) || k === passer) return;
+                var d1 = mDist(opl[k].x, opl[k].y, fp.x, fp.y);
+                if (d1 < rd) { rd = d1; receiver = k; }
+            });
+            if (receiver && passer) {
+                var lineX = ogx - odir * (13 + rng() * 6) / M_X;
+                var np = {};
+                Object.keys(opl).forEach(function (k) {
+                    var t0 = opl[k];
+                    if (k.split(':')[0] === opp && !isGkK(k) && (t0.x - lineX) * odir > 0) np[k] = { x: lineX - odir * rng() * 0.6, y: t0.y };   // la defensa sube en línea
+                    else if (k.split(':')[0] === attack && k !== receiver && (t0.x - lineX) * odir > -1 / M_X) np[k] = { x: lineX - odir * (1.5 + rng() * 3) / M_X, y: t0.y };   // los demás, en posición legal
+                    else np[k] = { x: t0.x, y: t0.y };
+                });
+                var ry = clamp(fp.y, 24, 76);
+                np[receiver] = { x: lineX + odir * (2.2 + rng() * 1.6) / M_X, y: ry };
+                var pp = np[passer];
+                if ((pp.x - lineX) * odir > -6 / M_X) np[passer] = pp = { x: lineX - odir * (12 + rng() * 6) / M_X, y: pp.y };
+                first.players = np;
+                first.ballPath = [{ x: pp.x, y: pp.y }, { x: np[receiver].x, y: np[receiver].y }];
+                first.waitRecv = receiver;
+                first.ms = 1800;
+                spotO = { x: clamp(np[receiver].x, 3, 97), y: clamp(np[receiver].y, 4, 96) };
+            }
             return [first, { players: clonePlayers(first.players), ballPath: [{ x: spotO.x, y: spotO.y }], ms: 2600, highlight: first.highlight, ref: first.ref,
                 setPiece: { type: 'free', side: opp, spot: spotO, offside: true } }];
         }
         if (appeal) first.appeal = opp;
+        if (!isFoul && play.kind === 'goal' && FK_GOAL_RE.test(t) && !/penalti/.test(t)) {
+            // Gol de falta directa: se coloca el balón, barrera si está cerca, y el lanzamiento entra entre los palos.
+            var ggx = goalXOf(attack), gdir = ggx === 100 ? 1 : -1;
+            var gspot = { x: clamp(fp.x, 3, 97), y: clamp(fp.y, 4, 96) };
+            var gdist = Math.hypot((ggx - gspot.x) * M_X, (50 - gspot.y) * M_Y);
+            if (gdist > 32 || gdist < 17) { gspot = { x: ggx - gdir * (20 + rng() * 6) / M_X, y: 38 + rng() * 24 }; gdist = Math.hypot((ggx - gspot.x) * M_X, (50 - gspot.y) * M_Y); }
+            var gside = rng() < 0.5 ? -1 : 1;
+            var gtail = phases.filter(function (ph) { return ph.pose === true || ph.pose === false; });
+            return [{ players: clonePlayers(first.players), ballPath: [{ x: gspot.x, y: gspot.y }], ms: 3600, highlight: first.highlight, ref: null,
+                setPiece: { type: 'free', side: attack, spot: gspot, wallUp: Math.abs(gspot.y - 50) < 30, fkGoal: true, kick: { x: ggx + gdir * 1.8, y: 50 + gside * (2.2 + rng() * 2.4), kind: 'shot', net: true } } }].concat(gtail);
+        }
         if (isFoul) {
             var fouled = opp, fgx = goalXOf(fouled), fdir = fgx === 100 ? 1 : -1;
             var spot = { x: clamp(fp.x, 3, 97), y: clamp(fp.y, 4, 96) };
-            if (/cerca del area|peligros|frontal|borde del area/.test(t)) spot = { x: fgx - fdir * (20 + rng() * 6) / M_X, y: 38 + rng() * 24 };
+            var fixedSpot = /cerca del area|peligros|frontal|borde del area/.test(t);
+            if (fixedSpot) spot = { x: fgx - fdir * (20 + rng() * 6) / M_X, y: 38 + rng() * 24 };
             var dist = Math.hypot((fgx - spot.x) * M_X, (50 - spot.y) * M_Y);
             var wallUp = dist < 32 && Math.abs(spot.y - 50) < 30;
             var kick = null, side = rng() < 0.5 ? -1 : 1;
             if (wallUp) {
                 var gdx = (fgx - spot.x) * M_X, gdy = (50 - spot.y) * M_Y, gl = Math.max(0.1, Math.hypot(gdx, gdy));
                 var wallAt = { x: spot.x + gdx / gl * 9.15 / M_X, y: spot.y + gdy / gl * 9.15 / M_Y };
-                if (/barrera/.test(t) && /estrell|rebota|choca|se queda|despeja/.test(t)) kick = { x: wallAt.x, y: wallAt.y, kind: 'shot' };
+                if (play.kind === 'goal') kick = { x: fgx + fdir * 1.8, y: 50 + side * (2.2 + rng() * 2.4), kind: 'shot', net: true };   // falta directa a la red (entre los palos)
+                else if (/barrera/.test(t) && /estrell|rebota|choca|se queda|despeja/.test(t)) kick = { x: wallAt.x, y: wallAt.y, kind: 'shot' };
                 else if (/larguero|por encima|alto|arriba|nubes/.test(t)) kick = { x: fgx + fdir * 2.6, y: 50 + side * rng() * 2.5, kind: 'over', net: true };
-                else if (/portero|ataja|vuela|atrapa|blocad|saca la falta|despeja/.test(t)) kick = { x: fgx - fdir * 1.2, y: 50 + side * 2.5, kind: 'shot' };
+                else if (/portero|ataja|vuela|atrapa|blocad|saca la falta|despeja|desvi|rechaz|detiene|manopla|para el|repele/.test(t)) kick = { x: fgx - fdir * 1.2, y: 50 + side * 2.5, kind: 'shot' };
                 else kick = { x: fgx + fdir * 1.8, y: 50 + side * (5.6 + rng() * 3), kind: 'shot', net: true };
             }
             var carded = play.kind === 'yellow' || play.kind === 'red';
             var protest = carded || /protest|reclam|airad/.test(t) || rng() < 0.4;
+            // El lanzamiento se narra en la jugada siguiente (gol de falta): aquí solo se coloca y espera.
+            var holdFk = simulating && simNextKind === 'goal' && simNextSide === fouled && FK_GOAL_RE.test(simNextText) && !/falta[^.]{0,40}\bsobre\b|comete (una )?falta|derriba/.test(simNextText);
+            if (holdFk) kick = null;
+            first.ms = Math.min(first.ms || 700, 1100);   // la falta se pita enseguida (la jugada narrada es la falta)
             var spPh = { players: clonePlayers(first.players), ballPath: [{ x: spot.x, y: spot.y }], ms: wallUp ? 3600 : 2400, highlight: first.highlight, ref: null,
-                setPiece: { type: 'free', side: fouled, spot: spot, wallUp: wallUp, kick: kick, protest: protest ? attack : null, protestN: carded ? 3 : 2 } };
+                setPiece: { type: 'free', side: fouled, spot: spot, wallUp: wallUp, kick: kick, protest: protest ? attack : null, protestN: carded ? 3 : 2, hold: holdFk, fixedSpot: fixedSpot } };
             return [first, spPh];
+        }
+        var penKick = /penalti/.test(t.replace(PEN_SPOT_RE, ' ')) && (play.kind === 'penalty' || play.kind === 'goal') &&
+            /(punto (fatidico|de penalti)|coloca la pelota|coloca el balon|carrerilla|coge el balon|lanza|ejecuta|chuta|dispara|transforma|detiene|ataja|para el penalti|bloca|falla|al palo|palo contrario|imparable|se tiro|adivin|engana|a la red|gol)/.test(t);
+        if (penKick) {
+            var pgx = goalXOf(attack), pfd = pgx === 100 ? 1 : -1, pside = rng() < 0.5 ? -1 : 1;
+            var pspot = { x: pgx - pfd * 11 / M_X, y: 50 };
+            var pkick;
+            if (play.kind === 'goal') pkick = { x: pgx + pfd * 1.8, y: 50 + pside * (2.2 + rng() * 2), kind: 'shot', net: true };
+            else if (/(fuera|desviad|al palo|poste|larguero|por encima|alto|nubes|lo manda)/.test(t) && !/(detiene|ataja|para |bloca|despeja|con los pies|vuela)/.test(t))
+                pkick = /(larguero|por encima|alto|nubes)/.test(t) ? { x: pgx + pfd * 2.6, y: 50 + pside * 1.5, kind: 'over' } : { x: pgx + pfd * 2.2, y: 50 + pside * 6.2, kind: 'shot' };
+            else pkick = { x: pgx - pfd * 0.9, y: 50 + pside * 2.0, kind: 'shot' };
+            var penPh = { players: clonePlayers(first.players), ballPath: [{ x: pspot.x, y: pspot.y }], ms: 3000, highlight: first.highlight, ref: null,
+                setPiece: { type: 'penalty', side: attack, spot: pspot, kick: pkick, protest: opp, protestN: 3 } };
+            var tail = [];
+            if (play.kind === 'goal') phases.forEach(function (q) { if (q.pose === true || q.pose === false) tail.push(q); });
+            first.ms = Math.min(first.ms || 700, 900);
+            return [first, penPh].concat(tail);
         }
         if (play.kind === 'penalty' || /\bvar\b|anulad|anula el gol/.test(t)) {
             // Penalti, VAR o gol anulado: los afectados rodean al árbitro.
@@ -3512,12 +4188,14 @@
         var q0 = (phases[0].ballPath || [])[0];
         if (play.kind === 'play' && q0 && !phases[0].setPiece && simSegT >= 3.9 && rng() < 0.6) {
             var tdir = attack === 'home' ? 1 : -1, ty = q0.y < 50 ? 0 : (q0.y > 50 ? 100 : (rng() < 0.5 ? 0 : 100));
-            phases[0].setPiece = { type: 'throw', side: attack, spot: { x: clamp(q0.x - tdir * (4 + rng() * 6), 4, 96), y: ty }, kick: { x: q0.x, y: q0.y, kind: 'lofted' } };
+            phases[0].setPiece = { type: 'throw', side: attack, spot: { x: clamp(q0.x - tdir * (4 + rng() * 6), 4, 96), y: ty }, kick: { x: q0.x, y: q0.y, kind: 'lofted' }, optional: true };
             phases[0].ms = Math.max(phases[0].ms || 700, 2200);
             return;
         }
         var last = phases[phases.length - 1], lp = last.ballPath || [], e = lp[lp.length - 1];
         if (!e || e.kind) return;
+        // Si la jugada siguiente empieza con su propia falta o reanudación, este balón no se va fuera (no se encadenan dos).
+        if (/^(foul|yellow|red|penalty|corner|throwin|goalkick|offside|freekick)$/.test(simNextKind || '')) return;
         var dir = attack === 'home' ? 1 : -1;
         if (play.kind === 'clearance' && rng() < 0.7) {
             lp.push({ x: clamp(e.x + dir * (6 + rng() * 8), 3, 97), y: e.y < 50 ? -3 : 103, kind: 'lofted' });
@@ -3684,15 +4362,23 @@
         if (ctx.attack) simAttackSide = ctx.attack;
         if (simRestart) {
             if (motor.phase) motor.phaseT += dt;
-            if (!ctx.frozen) stepRestart(dt);
+            // Durante un cambio la falta se sigue preparando (barrera, colocación), pero no se saca hasta que termina.
+            simRestart.pauseHold = !!ctx.frozen && simRestart.stage <= 0 && !simExiting;
+            if (!ctx.frozen || simRestart.pauseHold) stepRestart(dt);
+            if (simRestart) simRestart.pauseHold = false;
+        } else if (motor.waitRestart) {
+            motor.waitRestart = false;
+            if (motor.phases.length) startMotorPhase(motor.phases.shift());
         } else if (motor.phase) {
             motor.phaseT += dt;
             stepAction(dt);
             var busy = motor.action || motor.actions.length || ball.state === 'flight';
-            if (motor.phaseT >= motor.phaseDur && !busy) startMotorPhase(motor.phases.length ? motor.phases.shift() : null);
-            else if (motor.phaseT > motor.phaseDur + 4) { motor.actions = []; motor.action = null; startMotorPhase(motor.phases.length ? motor.phases.shift() : null); }
+            var holdCel = motor.holdNext && motor.phases.length && motor.phases[0].pose === true;   // gol aún sin marcar: nadie celebra antes
+            if (motor.phaseT >= motor.phaseDur && !busy) { if (!holdCel) startMotorPhase(motor.phases.length ? motor.phases.shift() : null); }
+            else if (motor.phaseT > motor.phaseDur + 4 && !holdCel) { motor.actions = []; motor.action = null; startMotorPhase(motor.phases.length ? motor.phases.shift() : null); }
         } else if (ctx.search) simHolderSearch(now, ctx.attack);
-        if (!simRestart && !ctx.frozen && ball.state === 'free' && !ball.lock && !ball.goalNet && (!motor.phase || (!motor.action && !motor.actions.length))) simChaseLoose();
+        var koForm = motor.phase && motor.phase.pose === false && (motor.phase.ballPath || []).length === 1 && Math.abs(motor.phase.ballPath[0].x - 50) < 0.5 && Math.abs(motor.phase.ballPath[0].y - 50) < 0.5;   // formación de saque: el balón espera en el centro
+        if (!simRestart && !ctx.frozen && !koForm && ball.state === 'free' && !ball.lock && !ball.goalNet && (!motor.phase || (!motor.action && !motor.actions.length))) simChaseLoose();
         var allowIdle = !simRestart && (!motor.phase || motor.phaseT > motor.phaseDur * 0.9);
         Object.keys(playerState).forEach(function (k) {
             var st = playerState[k];
@@ -3736,7 +4422,8 @@
         });
         var KICK = 1.6, EXIT = 26;
         var total = KICK + segDur.reduce(function (a, b) { return a + b; }, 0) + EXIT;
-        var S = Math.ceil(total / SAMPLE_DT) + 3;
+        // Margen: los goles y remates que llegan tarde alargan su jugada (el final nunca se corta); luego se recorta a lo usado.
+        var S = Math.ceil(total * 1.4 / SAMPLE_DT) + 3;
         var X = new Float32Array(S * N), Y = new Float32Array(S * N), V = new Uint8Array(S * N), F = new Uint8Array(S * N);
         var BX = new Float32Array(S), BY = new Float32Array(S), BH = new Float32Array(S), BS = new Int8Array(S), BO = new Int16Array(S);
         var segs = [];
@@ -3795,31 +4482,102 @@
             simEvents.push({ s: 0, type: 'kickoff', x: 50, y: 50 });
             advance(KICK, { frozen: true });
             var period = 1;
+            // Antes del descanso o del final: la falta narrada pendiente se lanza (no se queda sin sacar).
+            var koOwed = null;
+            function isKoPhase(q) { var bp = q.ballPath || []; return q.kickoff || q.kickPass || (q.pose === false && bp.length === 1 && Math.abs(bp[0].x - 50) < 0.5 && Math.abs(bp[0].y - 50) < 0.5); }
+            function finishPending() {
+                // Gol justo antes del descanso o del final: el saque de centro se hace igualmente antes del pitido.
+                var pendK = (motor.phase ? [motor.phase] : []).concat(motor.phases || []);
+                var kI = pendK.findIndex(isKoPhase);
+                var kos = koOwed || (kI >= 0 && (ball.goalNet || mDist(ball.x, ball.y, 50, 50) < 2.5 || (ball.fl && ball.fl.kind === 'reset')) ? pendK.slice(kI).filter(isKoPhase) : null);
+                koOwed = null;
+                if (kos && kos.length && !simRestart) {
+                    var lastSegK = segs[segs.length - 1], tK = simClock + 7;
+                    motor.actions = []; motor.action = null;
+                    motor.phases = kos.slice(1).map(function (q) { var o = Object.assign({}, q); o.ms = Math.min(o.ms || 700, 900); o.late = true; return o; });
+                    startMotorPhase(Object.assign({}, kos[0], { ms: Math.min(kos[0].ms || 700, 900) }));
+                    while (simClock < tK && (motor.phases.length || motor.action || motor.actions.length || ball.state === 'flight')) advance(0.2, { attack: simAttackSide, frozen: false, search: false });
+                    advance(0.8, { attack: simAttackSide, frozen: false, search: false });
+                    motor.phases = []; motor.phase = null;
+                    if (lastSegK && lastSegK.i >= 0) lastSegK.s1 = ns;
+                }
+                if (simRestart) simRestart.hold = false;
+                if (!simRestart && motor.phases && motor.phases.length) {
+                    var endSp = null;
+                    motor.phases.forEach(function (q) { if (!endSp && q.setPiece) endSp = q.setPiece; });
+                    if (endSp) { motor.actions = []; motor.action = null; motor.phases = []; beginRestart(endSp); }
+                }
+                if (simRestart && !simRestart.auto) {
+                    var lastSeg = segs[segs.length - 1], tEnd = simClock + 10;
+                    while (simRestart && simClock < tEnd) advance(0.2, { attack: simAttackSide, frozen: false, search: false });
+                    if (!simRestart) advance(1.2, { attack: simAttackSide, frozen: false, search: false });
+                    if (lastSeg && lastSeg.i >= 0) lastSeg.s1 = ns;
+                }
+            }
             plays.forEach(function (play, i) {
                 var h = lh.hist[i];
                 var p = play.minute === 'tanda' || play.kind === 'shootout' || play.kind === 'shootout-kick' ? period : periodOf(play);
+                if ((p % 2 === 0) !== simFlipped) finishPending();
                 var seg = { i: i, s0: ns, kind: play.kind, period: p, cut: false };
                 // Cambio de campo: cada uno aparece ya en su mitad (la reproducción lo funde a negro y vuelve).
                 if ((p % 2 === 0) !== simFlipped) { simFlipped = !simFlipped; seg.flip = true; seg.jumpFlip = true; }
+                // Descanso (fundido): la segunda parte arranca con el balón ya en el centro.
+                if (seg.jumpFlip && play.kickoffBefore) {
+                    if (simRestart) { simRestart = null; }
+                    ball.x = 50; ball.y = 50; ball.h = 0; ball.state = 'free'; ball.owner = null; ball.fl = null; ball.lock = false; ball.goalNet = false;
+                }
                 period = p;
                 seg.flipped = simFlipped;
                 // Altas que no han entrado por un cambio narrado (por si acaso): aparecen desde el banquillo.
                 var dP = Object.assign({}, d, { homeStarters: h.before.home, awayStarters: h.before.away, redCarded: [] });
                 var T = segDur[i];
                 simSegT = T;
+                simNextKind = plays[i + 1] ? plays[i + 1].kind : null;
+                simNextText = plays[i + 1] ? foldText(plays[i + 1].text || '') : '';
+                simNextSide = plays[i + 1] ? sideOfTeam(plays[i + 1].team, dP) : null;
+                // Falta, córner... de la jugada anterior que no llegó a empezar: se hace ahora (nunca se pierde).
+                var leftSpPh = null;
+                var isSubPause = play.kind === 'sub' && h.events.some(function (e) { return e.type === 'sub'; });
+                if (motor.phases && motor.phases.length && !isSubPause) {
+                    var leftSp = null;
+                    motor.phases.forEach(function (q) { if (!leftSp && q.setPiece) { leftSp = q.setPiece; leftSpPh = q; } });
+                    // Si aún hay otra reanudación en curso (p. ej. un saque de banda), la falta va justo después.
+                    if (leftSp && !simRestart) { beginRestart(Object.assign({}, leftSp, { hurry: true })); leftSpPh = null; }
+                }
                 var plan = planPlay(play, dP);
+                // Tras el descanso (fundido) todos aparecen ya en la formación de saque de centro.
+                if (seg.jumpFlip && play.kickoffBefore && plan.phases[0]) {
+                    var kt = plan.phases[0].players || {};
+                    Object.keys(playerState).forEach(function (k) {
+                        var st = playerState[k], t = kt[k];
+                        if (!t || st.leaving) return;
+                        st.x = t.x; st.y = t.y; st.tx = t.x; st.ty = t.y; st.hx = t.x; st.hy = t.y; st.vx = 0; st.vy = 0; st.pend = null;
+                    });
+                }
                 simGoalPlay = play.kind === 'goal' || play.kind === 'own-goal';
                 simAttackSide = plan.info.attack;
                 // Una reanudación pendiente sigue su curso en la jugada siguiente (la jugada espera); en los goles se ejecuta ya.
-                if (simRestart && (simGoalPlay || plan.phases.some(function (q) { return q.setPiece || (q.ballPath || []).some(function (pt) { return pt.kind === 'shot' || pt.kind === 'over'; }); }))) restartKick(simRestart);
+                // Una reanudación pendiente (falta con barrera, córner...) termina antes de que empiece la jugada nueva:
+                // la jugada espera a que se lance (nunca se lanza a medio colocar).
                 seg.attack = plan.info.attack; seg.outcome = plan.info.outcome; seg.fixed = plan.info.fixed;
                 var isSub = h.events.some(function (e) { return e.type === 'sub'; });
                 var ctx = { attack: plan.info.attack, frozen: false, search: true };
                 if (isSub && play.kind === 'sub') {
-                    // Parón: el balón no está en juego mientras se hace el cambio.
-                    motor.phases = []; motor.phase = null; motor.actions = []; motor.action = null;
-                    if (ball.state === 'flight') { ball.state = 'free'; ball.fl = null; ball.h = 0; }
-                    Object.keys(playerState).forEach(function (k) { var st = playerState[k]; st.tx = st.x; st.ty = st.y; st.hx = st.x; st.hy = st.y; st.pend = null; });
+                    // Parón: el balón no está en juego mientras se hace el cambio. Un saque de centro tras gol
+                    // que aún no se hizo no se pierde: se guarda y se hace al volver a jugar (pase atrás).
+                    var pendKo = (motor.phase ? [motor.phase] : []).concat(motor.phases || []);
+                    var koI0 = pendKo.findIndex(isKoPhase);
+                    if (koI0 >= 0 && !seg.jumpFlip) {
+                        koOwed = pendKo.slice(koI0).filter(isKoPhase).map(function (q) { var o = Object.assign({}, q); o.ms = Math.min(o.ms || 700, 900); o.late = true; return o; });
+                        // Mientras se hace el cambio, el balón vuelve al centro (de un envío, no aparece allí).
+                        if (mDist(ball.x, ball.y, 50, 50) > 2.5 && !(ball.state === 'flight' && ball.fl && ball.fl.kind === 'reset')) { ball.state = 'free'; ball.owner = null; ball.lock = false; ball.goalNet = false; launchBall({ x: 50, y: 50 }, 'reset', null); }
+                    }
+                    // Una falta pitada justo antes del cambio se saca después (no se pierde).
+                    var spKeep = (motor.phases || []).filter(function (q) { return q.setPiece; })[0] || null;
+                    if (spKeep && !simRestart) { beginRestart(Object.assign({}, spKeep.setPiece, { hurry: true })); spKeep = null; }   // se pita ya; se saca al terminar el cambio
+                    motor.phases = spKeep ? [spKeep] : []; motor.phase = null; motor.waitRestart = false; motor.actions = []; motor.action = null;
+                    if (ball.state === 'flight' && !(koOwed && ball.fl && ball.fl.kind === 'reset')) { ball.state = 'free'; ball.fl = null; ball.h = 0; }
+                    if (!(simRestart && simRestart.stage <= 0)) Object.keys(playerState).forEach(function (k) { var st = playerState[k]; st.tx = st.x; st.ty = st.y; st.hx = st.x; st.hy = st.y; st.pend = null; });
                     ctx.frozen = true; ctx.search = false;
                     seg.pause = true;
                 } else {
@@ -3840,9 +4598,26 @@
                         });
                         motor.scale = 1;
                     }
-                    motor.phases = phases.slice(1);
+                    // Saque de centro de la jugada anterior (tras gol) que no llegó a hacerse: va primero (pase atrás, nunca conduciendo).
+                    var koLeft = koOwed && !seg.jumpFlip ? koOwed : [];
+                    koOwed = null;
+                    var koBall = (ball.state === 'flight' && ball.fl && ball.fl.kind === 'reset' && mDist(ball.fl.to ? ball.fl.to.x : 50, ball.fl.to ? ball.fl.to.y : 50, 50, 50) < 2) || (ball.state !== 'flight' && mDist(ball.x, ball.y, 50, 50) < 2.5);
+                    if (!koLeft.length && !simRestart && (koBall || ball.goalNet)) {
+                        var pend = (motor.phase ? [motor.phase] : []).concat(motor.phases || []);
+                        var koI = pend.findIndex(isKoPhase);
+                        if (koI >= 0) koLeft = pend.slice(koI).filter(isKoPhase).map(function (q) { var o = Object.assign({}, q); o.ms = Math.min(o.ms || 700, 900); o.late = true; return o; });
+                    }
+                    if (koLeft.length) phases = koLeft.concat(phases);
+                    // Falta colocada en la jugada anterior y lanzada en esta (gol de falta): el lanzamiento es el de esta jugada.
+                    if (simRestart && simRestart.hold) {
+                        var fkI = phases.findIndex(function (q) { return q.setPiece && q.setPiece.fkGoal; });
+                        if (fkI >= 0) { simRestart.kick = phases[fkI].setPiece.kick; simRestart.born = simClock; phases = phases.slice(0, fkI).concat(phases.slice(fkI + 1)); }
+                        simRestart.hold = false;
+                    }
+                    if (leftSpPh) { var lsp = Object.assign({}, leftSpPh); lsp.setPiece = Object.assign({}, leftSpPh.setPiece, { hurry: true }); lsp.ms = Math.min(lsp.ms || 2400, 2400); phases = [lsp].concat(phases); }
                     motor.actions = []; motor.action = null;
-                    startMotorPhase(phases[0]);
+                    if (simRestart) { motor.phases = phases.slice(0); motor.phase = null; motor.waitRestart = true; }
+                    else { motor.waitRestart = false; motor.phases = phases.slice(1); startMotorPhase(phases[0]); }
                     if (play.kind === 'injury' || /cae lesionado|camilla/i.test(play.text || '')) simStartInjury(play);
                 }
                 // Cambios y expulsiones de esta jugada.
@@ -3862,16 +4637,18 @@
                     } else if (e.type === 'red') simLeave(k, 'red');
                 });
                 var poseS = null, goalS = null, sadEnd = null, lastPhase = motor.phase;
-                var segT0 = simClock, outForced = false, outIdx = -1, sawNet = false, goalJumped = false;
+                var segT0 = simClock, koT = -1e9, outForced = false, outIdx = -1, sawNet = false, goalJumped = false, goalForce = false;
                 if (phases && !seg.pause) phases.forEach(function (ph, qi) { if (outIdx < 0 && (ph.ballPath || []).some(function (q) { return q.kind === 'shot' || q.kind === 'over'; })) outIdx = qi; });
-                advance(T, ctx, function () {
+                var segStep = function () {
                     if (motor.phase !== lastPhase) {
                         if (lastPhase && lastPhase.pose !== false && motor.phase && motor.phase.pose === false && poseS == null) poseS = ns;
                         if (lastPhase && lastPhase.goal && sadEnd == null) sadEnd = ns;
                         lastPhase = motor.phase;
                     }
                     var isGoalPlay = play.kind === 'goal' || play.kind === 'own-goal';
-                    if (!isGoalPlay && outIdx >= 0 && !outForced && simClock - segT0 > T * 0.45) {
+                    var koBusy = (motor.phase && isKoPhase(motor.phase)) || (motor.action && motor.action.type === 'koPass') || (motor.phases || []).some(isKoPhase);
+                    if (koBusy) koT = simClock;   // el saque de centro va antes: el resto de la jugada cuenta desde que se hace
+                    if (!koBusy && !isGoalPlay && outIdx >= 0 && !outForced && simClock - Math.max(segT0, koT - T * 0.2) > T * 0.45) {
                         var curIdx = phases.indexOf(motor.phase);
                         if (motor.phase && curIdx >= 0 && curIdx <= outIdx && !(ball.state === "flight" && ball.fl && (ball.fl.kind === "shot" || ball.fl.kind === "over"))) {
                             // La jugada va con retraso: se salta directamente al remate (nadie se queda esperando).
@@ -3884,8 +4661,8 @@
                             if (kicks.length) { motor.actions = kicks; motor.action = null; }
                         }
                     }
-                    var lateGoal = isGoalPlay && simClock - segT0 > T * 0.3 && motor.phase && phases.indexOf(motor.phase) >= 0 && phases.indexOf(motor.phase) < phases.findIndex(function (q) { return q.pose === true; });
-                    if (lateGoal && !goalJumped && goalS == null && !(ball.fl && ball.fl.net)) {
+                    var lateGoal = !koBusy && isGoalPlay && simClock - Math.max(segT0, koT - T * 0.2) > T * 0.3 && motor.phase && phases.indexOf(motor.phase) >= 0 && phases.indexOf(motor.phase) < phases.findIndex(function (q) { return q.pose === true; });
+                    if (lateGoal && !simRestart && !goalJumped && goalS == null && !(ball.fl && ball.fl.net)) {
                         // Va con retraso: se pasa directamente a la fase del remate (pase al goleador y disparo).
                         goalJumped = true;
                         var shotIdx = -1;
@@ -3904,8 +4681,11 @@
                             lateGoal = false;
                         }
                     }
-                    lateGoal = lateGoal && simClock - segT0 > T * 0.55;
-                    if (isGoalPlay && goalS == null && !ball.lock && ((motor.phase && motor.phase.pose === true) || lateGoal) && !(ball.fl && ball.fl.net)) {
+                    lateGoal = lateGoal && simClock - Math.max(segT0, koT - T * 0.2) > T * 0.55;
+                    motor.holdNext = isGoalPlay && goalS == null;
+                    var stuckPre = isGoalPlay && motor.phase && motor.phases.length && motor.phases[0].pose === true && motor.phaseT >= motor.phaseDur && !motor.action && !motor.actions.length && ball.state !== 'flight';
+                    if (goalForce && goalS == null && !motor.action && !motor.actions.length && ball.state !== 'flight' && !ball.lock) goalForce = false;   // el remate se perdió: se vuelve a intentar
+                    if (isGoalPlay && goalS == null && !goalForce && !simRestart && !ball.lock && ((motor.phase && motor.phase.pose === true) || lateGoal || stuckPre) && !(ball.fl && ball.fl.net)) {
                         var celIdx = -1;
                         phases.forEach(function (ph, qi) { if (ph.pose === true && celIdx < 0) celIdx = qi; });
                         if (celIdx >= 0 && motor.phase && motor.phase.pose !== true) motor.phases = phases.slice(celIdx);
@@ -3914,27 +4694,86 @@
                         phases.forEach(function (ph) { (ph.ballPath || []).forEach(function (q) { if (q.kind === 'shot' && (q.x > 100 || q.x < 0)) netTo = q; }); });
                         if (!netTo) netTo = { x: ball.x > 50 ? 101.3 : -1.3, y: 50 };
                         motor.actions = []; motor.action = null;
-                        if (ball.owner) { ball.owner = null; ball.state = 'free'; }
-                        launchBall({ x: netTo.x, y: clamp(netTo.y, 45.5, 54.5) }, 'shot', null);
-                        ball.fl.net = true;
+                        var gxN = netTo.x > 50 ? 100 : 0;
+                        if (ball.state === 'flight' && mDist(ball.x, ball.y, gxN, 50) > 30) {
+                            // balón en el aire lejos de la portería: se espera a que lo reciba alguien
+                        } else if (mDist(ball.x, ball.y, gxN, 50) > 30) {
+                            // Lejos de la portería: primero llega a un compañero a distancia de tiro y luego remata.
+                            goalForce = true;
+                            motor.actions = [{ type: 'kick', pt: { x: netTo.x, y: clamp(netTo.y, 45.5, 54.5) }, shot: true, forceKind: 'shot' }];
+                        } else {
+                            if (ball.owner) { ball.owner = null; ball.state = 'free'; }
+                            launchBall({ x: netTo.x, y: clamp(netTo.y, 45.5, 54.5) }, 'shot', null);
+                            ball.fl.net = true;
+                        }
                     }
-                    if (ball.fl && ball.fl.net) sawNet = true;
+                    if (ball.fl && ball.fl.net && ball.fl.at >= segT0 - 1e-6 && !(ball.fl.born != null && ball.fl.born < segT0 - 1e-6)) sawNet = true;   // un remate de la jugada anterior no cuenta
                     if (goalS == null && isGoalPlay && ball.lock && sawNet) goalS = ns;
-                });
+                    if (ball.state === 'flight' && ball.fl && (ball.fl.kind === 'shot' || ball.fl.kind === 'over') && ball.fl.at >= segT0 - 1e-6) sawShot = true;
+                };
+                var sawShot = false;
+                advance(T, ctx, segStep);
+                motor.holdNext = false;
+                // Gol que llega tarde (la jugada esperó a una falta): la jugada se alarga hasta que el balón entra y se celebra un poco.
+                if ((play.kind === 'goal' || play.kind === 'own-goal') && goalS == null && !seg.pause) {
+                    var tMax = simClock + 12;
+                    while (goalS == null && simClock < tMax) advance(0.2, ctx, segStep);
+                    if (goalS != null) advance(2.4, ctx, segStep);
+                }
+                motor.holdNext = false;
+                // Remate narrado que no llegó a salir (la jugada esperó a una reanudación): la jugada se alarga hasta que se ve el disparo.
+                if (!(play.kind === 'goal' || play.kind === 'own-goal') && !seg.pause && outIdx >= 0 && !sawShot && phases) {
+                    var tMaxS = simClock + 7, kicked = false;
+                    while (!sawShot && simClock < tMaxS) {
+                        if (!simRestart && !kicked && ball.state !== 'flight' && (!motor.phase || phases.indexOf(motor.phase) < 0 || phases.indexOf(motor.phase) > outIdx || (!motor.action && !motor.actions.length && motor.phaseT >= motor.phaseDur))) {
+                            // ya no queda fase de remate pendiente: se lanza la del remate desde donde esté el balón
+                            kicked = true; outForced = true;
+                            motor.actions = []; motor.action = null; motor.waitRestart = false;
+                            motor.phases = phases.slice(outIdx + 1);
+                            startMotorPhase(phases[outIdx]);
+                            var kicks2 = motor.actions.filter(function (q) { return q.forceKind; });
+                            if (kicks2.length) { motor.actions = kicks2; motor.action = null; }
+                        }
+                        advance(0.2, ctx, segStep);
+                    }
+                    if (sawShot) { var tEnd = simClock + 2.2; while (simClock < tEnd && ball.state === 'flight') advance(0.2, ctx, segStep); advance(0.6, ctx, segStep); }
+                }
+                // La falta narrada en esta jugada se pita dentro de ella (no después del cambio o de la jugada siguiente).
+                if (!seg.pause && !simRestart && phases && motor.phases && motor.phases.length) {
+                    var spq = motor.phases.filter(function (q) { return q.setPiece && (q.setPiece.type === 'free' || q.setPiece.type === 'penalty') && phases.indexOf(q) >= 0 && !q.setPiece.hold; })[0];
+                    if (spq) {
+                        motor.phases.splice(motor.phases.indexOf(spq), 1);
+                        motor.actions = []; motor.action = null;
+                        var sp2 = Object.assign({}, spq.setPiece, { hurry: true });
+                        var bpos = ball.state === 'flight' && ball.fl ? ball.fl.to : { x: ball.x, y: ball.y };
+                        if (sp2.type === 'free' && !sp2.offside && !sp2.fixedSpot && bpos.x > 1 && bpos.x < 99 && bpos.y > 1 && bpos.y < 99 && mDist(bpos.x, bpos.y, sp2.spot.x, sp2.spot.y) > 6) {
+                            // El balón no llegó adonde se iba a pitar: se pita donde está (sin llevarlo de un lado a otro).
+                            sp2.spot = { x: clamp(bpos.x, 3, 97), y: clamp(bpos.y, 4, 96) };
+                            var fgx2 = goalXOf(sp2.side), fd2 = Math.hypot((fgx2 - sp2.spot.x) * M_X, (50 - sp2.spot.y) * M_Y);
+                            sp2.wallUp = fd2 < 32 && Math.abs(sp2.spot.y - 50) < 30;
+                            if (!sp2.wallUp) sp2.kick = null;
+                            else if (!sp2.kick) sp2.kick = { x: fgx2 + (fgx2 === 100 ? 1 : -1) * 1.8, y: 50 + (rng() < 0.5 ? -1 : 1) * (5.6 + rng() * 3), kind: 'shot', net: true };
+                        }
+                        beginRestart(sp2);
+                        motor.waitRestart = !!(motor.phases && motor.phases.length);
+                    }
+                }
                 seg.s1 = ns;
                 seg.pose = poseS != null ? poseS : Math.max(seg.s0, ns - 2);
                 seg.goalS = goalS;
                 seg.sadEnd = sadEnd != null ? sadEnd : (goalS != null ? Math.min(ns, goalS + Math.round(4 / SAMPLE_DT)) : null);
-                seg.scorerSide = play.kind === 'goal' ? plan.info.attack : (play.kind === 'own-goal' ? (plan.info.attack === 'home' ? 'away' : 'home') : null);
+                seg.scorerSide = play.kind === 'goal' || play.kind === 'own-goal' ? plan.info.attack : null;
                 seg.bench = h.bench; seg.out = h.out;
                 if (goalS != null && !simEvents.some(function (e) { return e.type === 'kickoff' && e.s >= goalS; })) simEvents.push({ s: Math.max(goalS, ns - 2), type: 'kickoff', x: 50, y: 50 });
                 segs.push(seg);
             });
+            // Una falta narrada en la última jugada se lanza antes del final (no se queda sin sacar).
+            finishPending();
             // Final: todos se retiran por el túnel.
             var ex = { i: -2, s0: ns, kind: 'exit', period: period, flipped: simFlipped };
             if (simRestart) restartKick(simRestart);
             simExiting = true;
-            motor.phases = []; motor.phase = null; motor.actions = []; motor.action = null;
+            motor.phases = []; motor.phase = null; motor.waitRestart = false; motor.actions = []; motor.action = null;
             Object.keys(playerState).forEach(function (k) { simLeave(k, 'exit'); });
             var rt = simLogOfVis(50, 106); refState.tx = rt.x; refState.ty = rt.y; refState.spd = 2.4;
             advance(EXIT, { frozen: true });
@@ -3964,7 +4803,30 @@
             }
         }
         segs.forEach(function (sg, k) { sg.k = k; if (sg.i >= 0) segByPlay[sg.i] = sg; });
-        return { events: simEvents.slice(), figs: figs, fidx: fidx, N: N, S: ns, X: X, Y: Y, V: V, F: F, BX: BX, BY: BY, BH: BH, BS: BS, BO: BO,
+        // Marcador y reacciones de los banquillos ligados al instante de la línea de tiempo en que pasa
+        // lo narrado (el balón entra, el árbitro pita la falta o el penalti...), no al de la narración.
+        var scoreTimes = [], reacts = [];
+        var evSorted = simEvents.slice().sort(function (a, b) { return a.s - b.s; });
+        segs.forEach(function (sg) {
+            if (sg.i < 0) return;
+            var pl = plays[sg.i];
+            if (!pl) return;
+            var isG = pl.kind === 'goal' || pl.kind === 'own-goal';
+            if (isG) scoreTimes.push({ i: sg.i, s: sg.goalS != null ? sg.goalS : sg.s1, side: pl.scoreSide || sideOfTeam(pl.team, dInit) || 'home' });
+            var key = isG ? (sg.goalS != null ? sg.goalS : sg.s1) : null;
+            if (key == null) {
+                for (var ek = 0; ek < evSorted.length; ek++) {
+                    var e = evSorted[ek];
+                    if (e.s < sg.s0) continue;
+                    if (e.s > sg.s1 + 30) break;
+                    if (/^(free|wall|penalty|offside|protest|var|appeal)$/.test(e.type) && (e.play == null || e.play === sg.i)) { key = e.s; break; }
+                }
+            }
+            if (key == null) key = sg.s0 + 1;
+            reacts.push({ i: sg.i, s: key });
+        });
+        reacts.sort(function (a, b) { return a.s - b.s; });
+        return { scoreTimes: scoreTimes, reacts: reacts, events: simEvents.slice(), figs: figs, fidx: fidx, N: N, S: ns, X: X, Y: Y, V: V, F: F, BX: BX, BY: BY, BH: BH, BS: BS, BO: BO,
             segs: segs, segByPlay: segByPlay, squad: lh.squad, ms: performance.now() - t0, plays: plays.length,
             fixedPasses: segs.reduce(function (a, sg) { return a + (sg.fixed || 0); }, 0) };
     }
@@ -4111,7 +4973,7 @@
             var res = null;
             try { res = resolvePlay(play, Object.assign({}, d)); } catch (e) { res = null; }
             if (res && res.highlight) highlightPlayers(res.highlight);
-            if (!immediate) { managerReact(play, d); varFx(play); }
+            // Las reacciones (banquillos, VAR) salen cuando la reproducción llega al momento (tlFrame).
         } else highlightPlayers([]);
     }
 
@@ -4175,6 +5037,11 @@
         if (tl.events && pb.lastS >= 0 && !pb.snap && s > pb.lastS && s - pb.lastS < 25) {
             for (var ei = 0; ei < tl.events.length; ei++) { var ev = tl.events[ei]; if (ev.s > pb.lastS && ev.s <= s) showTag(ev); }
         }
+        if (tl.reacts && pb.lastS >= 0 && !pb.snap && s > pb.lastS && s - pb.lastS < 25) {
+            var dR = data(), plR = dR ? buildPlays(dR) : [];
+            for (var ri2 = 0; ri2 < tl.reacts.length; ri2++) { var rc = tl.reacts[ri2]; if (rc.s > pb.lastS && rc.s <= s && plR[rc.i]) { managerReact(plR[rc.i], dR); varFx(plR[rc.i]); } }
+        }
+        if (ui.score && !dragging) { var dS = data(); if (dS) { var stx = tlScoreText(s, dS); if (stx && ui.score.textContent !== stx) ui.score.textContent = stx; } }
         pb.lastS = s; pb.snap = false;
         var ns = nodeScale !== 1 ? ' scale(' + nodeScale.toFixed(3) + ')' : '';
         var wob = Math.min(1, pb.held / 1.2);
@@ -4201,6 +5068,9 @@
                     node.el.classList.toggle('campo-on-stretcher', fl === 2);
                     node.el.classList.toggle('campo-sent-off', fl === 3);
                     node.el.classList.toggle('campo-throwing', fl === 5);
+                    // Saque de banda: los brazos (y el balón) hacia el campo, nunca fuera del dibujo.
+                    var armsEl = node.el.querySelector('.campo-arms');
+                    if (armsEl) armsEl.setAttribute('transform', fl === 5 && y < 50 ? 'scale(1,-1)' : '');
                     node.el.classList.toggle('campo-flag-up', fl === 6);
                     node.el.classList.toggle('campo-protest', fl === 7);
                     node.flag = fl;
@@ -4222,6 +5092,11 @@
         if (own >= 0 && tl.BS[k] === 0 && tl.V[k * N + own]) {
             // pegado al pie del poseedor tal y como se dibuja (incluido su desfase)
             bx += pb.off[own * 2]; by += pb.off[own * 2 + 1];
+        }
+        if (own >= 0 && tl.BS[k] === 0 && tl.F[k * N + own] === 5) {
+            // En las manos del que saca de banda, hacia el campo.
+            var tyT = pb.disp[own * 2 + 1];
+            bx = pb.disp[own * 2]; by = tyT + (tyT < 50 ? 1 : -1) * 30 * nodeScale / PITCH.h * 100; bh = 0;
         }
         pb.boff[0] *= decay; pb.boff[1] *= decay;
         bx += pb.boff[0]; by += pb.boff[1];
@@ -4267,7 +5142,7 @@
         var top = root && root.querySelector('svg');
         if (!top || !d) return;
         var plays = buildPlays(d);
-        var score = previewScore(plays, seg.i, d);
+        var score = tlScoreText(seg.goalS, d) || previewScore(plays, seg.i, d);
         var team = seg.scorerSide === 'home' ? d.homeTeam : d.awayTeam;
         var old = top.querySelector('.campo-goal-banner');
         if (old) old.remove();
@@ -4393,7 +5268,8 @@
             p = plays[i];
             if (!p) continue;
             if (p.kind === 'goal' || p.kind === 'own-goal') {
-                if (p.team === d.homeTeam) h++;
+                if (p.scoreSide) { if (p.scoreSide === 'home') h++; else a++; }
+                else if (p.team === d.homeTeam) h++;
                 else if (p.team === d.awayTeam) a++;
             }
         }
@@ -4421,6 +5297,18 @@
         return { h: h, a: a };
     }
 
+    // Marcador en un instante de la línea de tiempo: goles cuyo balón ya ha entrado (y la tanda, si la hay).
+    function tlScoreText(s, d) {
+        if (!tl || !tl.scoreTimes || !d) return null;
+        var h = 0, a = 0, idx = -1;
+        tl.scoreTimes.forEach(function (g) { if (g.s <= s) { if (g.side === 'home') h++; else a++; } });
+        tl.segs.forEach(function (sg) { if (sg.i >= 0 && sg.s0 <= s) idx = sg.i; });
+        var text = h + ' - ' + a;
+        var pens = idx >= 0 ? shootoutScoreAt(buildPlays(d), idx, d) : null;
+        if (pens) text += ' (pen ' + pens.h + '-' + pens.a + ')';
+        return text;
+    }
+
     function previewScore(plays, idx, d) {
         var reg = regularScoreAt(plays, idx, d);
         var pens = shootoutScoreAt(plays, idx, d);
@@ -4441,7 +5329,10 @@
         setCaption(play, d);
         var label = playMinuteLabel(play);
         if (ui.min) ui.min.textContent = label;
-        if (ui.score) ui.score.textContent = previewScore(buildPlays(d), play.i, d);
+        if (ui.score) {
+            var sgP = tl && tl.segByPlay ? tl.segByPlay[play.i] : null;
+            ui.score.textContent = (sgP && tlScoreText(immediate ? sgP.pose : pb.s, d)) || previewScore(buildPlays(d), play.i, d);
+        }
         updatePensBoard(buildPlays(d), play.i, d);
         var narrEl = $('narration');
         var minEl = $('minute');
@@ -4809,7 +5700,10 @@
         if (ui.score && !dragging) {
             var playsNow = buildPlays(d);
             var idxNow = play ? play.i : -1;
-            if (idxNow >= 0 && (d.finished || (play && (play.kind === 'shootout' || play.kind === 'shootout-kick')))) {
+            if (tl && pb.seg && tl.scoreTimes) {
+                // El marcador sigue a la reproducción: sube cuando el balón entra, no cuando lo narra el texto.
+                ui.score.textContent = tlScoreText(pb.s, d);
+            } else if (idxNow >= 0 && (d.finished || (play && (play.kind === 'shootout' || play.kind === 'shootout-kick')))) {
                 ui.score.textContent = previewScore(playsNow, idxNow, d);
             } else {
                 ui.score.textContent = d.score || '0 - 0';
@@ -5120,6 +6014,8 @@
             tlFrame(0);
             return { seg: sg.i, kind: sg.kind };
         },
+        debugScoreAt: function (s) { var d = data(); return d ? String(tlScoreText(s, d) || '').replace(/\s*\(.*\)/, '').replace(/\s/g, '') : null; },
+        debugTl: function () { var d = data(); return { tl: tl, plays: d ? buildPlays(d) : [], d: d, M_X: M_X, M_Y: M_Y, PITCH: PITCH, nodeScale: nodeScale }; },
         debugBuild: function () { var t0 = performance.now(); buildTimeline(tlData); return Math.round(performance.now() - t0); },
         debugBall: function (a, b) {
             var out = []; for (var q = a; q < Math.min(b, tl.S); q++) out.push(q + ':' + tl.BX[q].toFixed(1) + ',' + tl.BY[q].toFixed(1) + ',' + tl.BH[q].toFixed(1) + ',' + tl.BS[q] + ',' + tl.BO[q] + ',' + simDbg[q]);
