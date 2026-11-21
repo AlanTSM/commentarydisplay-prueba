@@ -122,6 +122,18 @@
         if (!parts.length) return '';
         var last = parts[parts.length - 1];
         var max = compact ? 6 : 10;
+        // Apellido de 1 a 3 letras («Jr.», «II», «Gil»...): se muestra el nombre completo sin iniciales
+        // («Vinicius Jr»), y las partículas van con su apellido («De Bruyne», «Van Dijk»).
+        if (parts.length > 1 && last.length <= 3) {
+            var words = raw.split(/\s+/).filter(function (w) { return w && !/^[A-Za-zÁÉÍÓÚÑ]\.?$/.test(w); });
+            var full = words.join(' ').replace(/\.$/, '');
+            var maxF = compact ? 10 : 14;
+            return full.length > maxF ? full.slice(0, maxF - 1) + '.' : full;
+        }
+        if (parts.length > 2 && /^(de|da|do|dos|das|del|van|von|der|den|di|du|le|la|ter|ten|el|al|mac)$/i.test(parts[parts.length - 2]) && !compact) {
+            var two = parts[parts.length - 2] + ' ' + last;
+            if (two.length <= 12) return two;
+        }
         return last.length > max ? last.slice(0, max - 1) + '.' : last;
     }
 
@@ -142,8 +154,8 @@
     // Así el dorsal y el nombre siguen siendo legibles aunque el SVG se reduzca a un 30 %.
     function computeNodeScale() {
         var w = pitchBoxWidth();
-        if (!w || w >= 900) return 1;
-        return clamp(1 + (900 - w) / 900 * 1.3, 1, 1.75);
+        if (!w || w >= 720) return 1;
+        return clamp(1 + (720 - w) / 720 * 1.5, 1, 1.75);
     }
 
     function sepFactor() {
@@ -656,6 +668,9 @@
             var text = (p.lines || []).join(' \n ');
             var players = d.playersIn ? d.playersIn(text) : [];
             var kind = classify(text);
+            // «Minuto de juego N :---» (minutos sin ocasiones mostrados): relleno sin jugada narrada.
+            var filler = /:\s*-{3,}\s*$/.test(first) && (p.lines || []).length <= 1;
+            if (filler) { kind = 'play'; team = prevTeam || (i % 2 ? d.awayTeam : d.homeTeam); players = []; }
             // «la otra banda» solo tiene sentido si sigue atacando el mismo equipo.
             var hint = laneHint(text, team && team === prevTeam ? prevLane : null);
             var lane = hint.lane;
@@ -674,6 +689,7 @@
                 players: players,
                 kind: kind,
                 lane: lane,
+                filler: filler,
                 laneSrc: hint.src,
                 target: inferTarget(kind, team, players, d, i, text, lane)
             };
@@ -830,6 +846,19 @@
             svg.appendChild(net);
         });
         svg.appendChild(goals);
+
+        // Pancartas publicitarias en el lateral alto (detrás de la línea de banda de arriba).
+        var ads = svgEl('g', { 'class': 'campo-ads', 'pointer-events': 'none' });
+        var AD = [['TSM TV', '#e11d48', '#ffffff'], ['LA REVISTA DE TSM', '#1e1b4b', '#facc15'], ['TSM TV', '#e11d48', '#ffffff'], ['LA REVISTA DE TSM', '#1e1b4b', '#facc15']];
+        var adY = 5, adH = Math.max(18, y - 12), adX0 = x + 70, adW = (w - 140) / AD.length;
+        AD.forEach(function (a, i) {
+            var ax = adX0 + i * adW;
+            ads.appendChild(svgEl('rect', { x: ax + 3, y: adY, width: adW - 6, height: adH, rx: 3, fill: a[1], stroke: 'rgba(255,255,255,0.35)', 'stroke-width': 1 }));
+            var at = svgEl('text', { x: ax + adW / 2, y: adY + adH / 2 + 5.5, 'text-anchor': 'middle', fill: a[2], 'font-size': '15', 'font-weight': '800', 'letter-spacing': '2', 'font-family': 'Segoe UI, sans-serif' });
+            at.textContent = a[0];
+            ads.appendChild(at);
+        });
+        svg.appendChild(ads);
 
         var labels = svgEl('g', { fill: 'rgba(255,255,255,0.45)', 'font-size': '14', 'font-family': 'Segoe UI, sans-serif', 'text-anchor': 'middle' });
         var lblL = textAt(x + 80, y + 22, ends.flipped ? 'Visitante' : 'Local');
@@ -2255,6 +2284,17 @@
         var dur = dist / spd + (kind === 'lofted' ? 0.25 / tp : 0);
         if (kind === 'shot' || kind === 'over') dur = Math.max(dur, 0.32);   // un remate siempre se ve salir
         var lo = ball.owner && playerState[ball.owner];
+        if (simulating && window.__campoJerks !== false) {
+            // Auditoría: el balón no sale ni cambia de rumbo sin que lo toque nadie.
+            var nearL = lo ? ball.owner : nearestPlayerTo(from.x, from.y, 2.6, false);
+            var fl0 = ball.state === 'flight' ? ball.fl : null;
+            var ang = 0;
+            if (fl0) { var ax = (fl0.to.x - fl0.from.x) * M_X, ay = (fl0.to.y - fl0.from.y) * M_Y, bx2 = (to.x - from.x) * M_X, by2 = (to.y - from.y) * M_Y; var la = Math.hypot(ax, ay) * Math.hypot(bx2, by2); ang = la > 0.01 ? Math.acos(clamp((ax * bx2 + ay * by2) / la, -1, 1)) * 180 / Math.PI : 0; }
+            var inside = from.x > 0 && from.x < 100 && from.y > 0 && from.y < 100;
+            if (!nearL && inside && kind !== 'reset') simJerks.push({ s: simNs, kind: kind, why: fl0 ? 'enVuelo' : 'sinJugador', ang: Math.round(ang), fk: fl0 ? fl0.kind + ':' + (simClock - fl0.at).toFixed(1) + '/' + fl0.dur.toFixed(1) : undefined, at: window.__jerkStack ? String(new Error().stack).split('\n').slice(2, 4).map(function (l) { return l.replace(/.*campo\.js:/, ''); }).join(' < ') : undefined });
+            else if (kind === 'reset' && fl0 && fl0.kind !== 'reset' && ang > 40 && inside) simJerks.push({ s: simNs, kind: kind, why: 'giroReset', ang: Math.round(ang) });
+            else if (kind === 'reset' && inside && !nearL && dist > 8 && !(Math.abs(to.x - 50) < 1 && Math.abs(to.y - 50) < 1)) simJerks.push({ s: simNs, kind: kind, why: 'resetEnCampo', d: Math.round(dist), at: window.__jerkStack ? String(new Error().stack).split('\n').slice(2, 4).map(function (l) { return l.replace(/.*campo\.js:/, ''); }).join(' < ') : undefined });
+        }
         ball.lastSide = lo ? lo.side : (simulating ? simAttackSide : ball.lastSide);
         ball.goalNet = false;
         if (simulating && kind === 'over') simEvent('over', to.x, to.y);
@@ -2309,9 +2349,19 @@
                     st.spd = Math.max(st.spd || 0, 4);
                 }
             });
-            if ((mDist(tk.x, tk.y, 50, 50) > 1.3 || oppIn) && motor.actionT < (koLate ? 2.4 : 4.5) / tp) return;
+            // Todos en su campo antes de sacar (el que saca, en el centro): nadie se queda en la mitad rival.
+            var outHalf = false;
+            Object.keys(playerState).forEach(function (k) {
+                var st = playerState[k];
+                if (!st || st.leaving || st.down || k === a.taker) return;
+                var home = st.side === 'home';
+                if (home ? st.tx > 48.6 : st.tx < 51.4) { st.tx = st.hx = home ? 44 - rng() * 5 : 56 + rng() * 5; st.pend = null; }
+                if (home ? st.x > 50.4 : st.x < 49.6) { outHalf = true; st.spd = Math.max(st.spd || 0, 6); }
+            });
+            if ((mDist(tk.x, tk.y, 50, 50) > 1.3 || oppIn || outHalf) && motor.actionT < (koLate ? 5 : 8) / tp) return;
             if (motor.actionT < 0.25 / tp) return;
             ball.state = 'held'; ball.owner = a.taker;
+            if (simulating) simEvent('kokick', 50, 50, { side: tk.side });
             launchBall({ x: mateSt.tx, y: mateSt.ty }, 'ground', a.mate);
             startAction(null);
             return;
@@ -2320,9 +2370,23 @@
             var who = holderOf(a.who);
             if (!who) { startAction(null); return; }
             if (ball.state !== 'held' || ball.owner !== a.who) {
-                // El balón no lo tiene él: si está cerca lo controla; si no, se lo pasan.
-                if (ball.state !== 'flight' && mDist(ball.x, ball.y, who.x, who.y) < 2.2) { ball.state = 'held'; ball.owner = a.who; }
-                else if (ball.state !== 'flight') { launchBall({ x: who.tx, y: who.ty }, 'ground', a.who); }
+                // El balón no lo tiene él: si está cerca lo controla; si lo tiene un compañero, se lo pasa;
+                // si está suelto y no hay nadie al lado, va él a por el balón (nunca viaja solo).
+                if (ball.state !== 'flight' && mDist(ball.x, ball.y, who.x, who.y) < 2.2) {
+                    ball.state = 'held'; ball.owner = a.who;
+                    if (a.dest) { who.tx = who.hx = a.dest.x; who.ty = who.hy = a.dest.y; a.dest = null; }
+                } else if (ball.state !== 'flight') {
+                    var nbK = ball.state === 'held' && ball.owner ? ball.owner : nearestPlayerTo(ball.x, ball.y, 2.2, false);
+                    if (simulating && !nbK && motor.actionT < 2.6 / tp && ball.x > 0 && ball.x < 100 && ball.y > 0 && ball.y < 100) {
+                        if (!a.dest) a.dest = { x: who.tx, y: who.ty };
+                        who.tx = who.hx = ball.x; who.ty = who.hy = ball.y; who.pend = null; who.spd = Math.max(who.spd || 0, 6.5);
+                        return;
+                    }
+                    if (nbK && ball.state !== 'held') { ball.state = 'held'; ball.owner = nbK; }
+                    if (a.dest) { who.tx = who.hx = a.dest.x; who.ty = who.hy = a.dest.y; a.dest = null; }
+                    if (!nbK) { startAction(null); return; }   // nadie la toca: no se mueve sola
+                    launchBall({ x: who.tx, y: who.ty }, 'ground', a.who);
+                }
             }
             var dd = mDist(who.x, who.y, who.tx, who.ty);
             if ((ball.owner === a.who && dd < 1.4) || motor.actionT > 3.2 / tp) startAction(null);
@@ -2346,8 +2410,12 @@
                 if (recv && owner && recv.side !== owner.side) kind = recv.pos === 'GK' ? 'shot' : 'ground';
                 // Balón parado dentro del campo tras un remate (parada, rechace): es un balón suelto más, alguien lo recoge.
                 if (simulating && ball.lock && !simRestart && !ball.goalNet && ball.state === 'free' && ball.x >= 0 && ball.x <= 100 && ball.y >= 0 && ball.y <= 100) ball.lock = false;
-                // Balón suelto lejos del destino: antes de enviarlo, alguien va a por él (nunca viaja solo).
-                if (simulating && a.forceKind !== 'reset' && !ball.lock && !owner && ball.state === 'free' && mDist(ball.x, ball.y, to.x, to.y) > 20 &&
+                // Balón suelto sin nadie al lado: antes de enviarlo, alguien va a por él (nunca viaja solo).
+                if (simulating && !owner && ball.state === 'free' && !ball.lock) {
+                    var nbP = nearestPlayerTo(ball.x, ball.y, 2.2, false);
+                    if (nbP) { ball.state = 'held'; ball.owner = nbP; ball.lastSide = playerState[nbP].side; owner = playerState[nbP]; }
+                }
+                if (simulating && a.forceKind !== 'reset' && !ball.lock && !owner && ball.state === 'free' &&
                     ball.x > 0 && ball.x < 100 && ball.y > 0 && ball.y < 100 && (a.fetchT = (a.fetchT || 0) + dt) < 4) {
                     var fetch = a.fetcher && playerState[a.fetcher] ? a.fetcher : nearestOf(sideKeys(simAttackSide, true), ball.x, ball.y);
                     if (!a.fetcher && fetch && mDist(playerState[fetch].x, playerState[fetch].y, ball.x, ball.y) > 15) fetch = nearestOf(sideKeys('home', true).concat(sideKeys('away', true)), ball.x, ball.y) || fetch;
@@ -3557,6 +3625,8 @@
        barrera, fueras de juego, linieres y protestas. Todo ocurre dentro de la simulación del coreógrafo. ---- */
     var simDbg = [], simSegT = 99, tlData = null, simNextKind = null, simNextText = '', simNextSide = null;
     var FK_GOAL_RE = /(falta a cargo|lanza la falta|lanzamiento de falta|la falta se cuela|golpeo de falta|libre directo|tiro libre|ejecuta la falta|falta directa|saca la falta|clava la falta|de falta)/;
+    var simJerks = [];
+    var tl0Got = -1;   // muestra en la que el árbitro recoge el balón al final
     var simRestart = null, simEvents = [], simNs = 0, simAR = [], simGoalPlay = false, simAttackSide = 'home', simExiting = false;
     var RESTART_PREP = { throw: 1.3, goalkick: 1.9, corner: 2.1, free: 1.5, wall: 2.8, offside: 1.8, penalty: 2.6 };
     var EVENT_LABEL = { throw: 'Saque de banda', goalkick: 'Saque de puerta', corner: 'Córner', free: 'Falta', wall: 'Falta · barrera',
@@ -3744,13 +3814,30 @@
         r.phase = motor.phase;
     }
 
+    // Balón suelto sin nadie al lado: antes de moverlo, va a por él el más cercano (de ese equipo si está a mano).
+    function simFetch(r, prefSide, maxT) {
+        if (ball.state === 'held' && ball.owner && playerState[ball.owner]) return false;
+        var nb = nearestPlayerTo(ball.x, ball.y, 2.0, false);
+        if (nb) { ball.state = 'held'; ball.owner = nb; return false; }
+        if (!(ball.x > 0 && ball.x < 100 && ball.y > 0 && ball.y < 100)) return false;
+        r.fetchT = (r.fetchT || 0) + SIM_DT;
+        if (r.fetchT > (maxT || 2.5)) return false;
+        var k = r.fetcher && playerState[r.fetcher] ? r.fetcher : nearestOf(sideKeys(prefSide, true), ball.x, ball.y);
+        if (k && !r.fetcher && mDist(playerState[k].x, playerState[k].y, ball.x, ball.y) > 22) k = nearestOf(sideKeys('home', true).concat(sideKeys('away', true)), ball.x, ball.y) || k;
+        r.fetcher = k;
+        if (!k) return false;
+        var fs = playerState[k];
+        fs.tx = fs.hx = ball.x; fs.ty = fs.hy = ball.y; fs.pend = null; fs.spd = Math.max(fs.spd || 0, 7);
+        return true;
+    }
+
     // Antes de la reanudación: el balón sale por donde se va a sacar, o llega a donde se pita la falta.
     function stepRestartPre(r, dt) {
         var outNow = ball.x < -0.2 || ball.x > 100.2 || ball.y < -0.2 || ball.y > 100.2;
         function go() { r.stage = 0; r.t = 0; r.rest = 0; placeRestart(r); }
         if (r.need === 'out') {
             if (!r.launched) {
-                if (ball.state === 'flight' && r.t < 1.4) return;
+                if (ball.state === 'flight' && (r.t < 2.4 || (ball.fl && ball.fl.dur - ball.fl.t < 1.4 && r.t < 5))) return;   // se deja caer el balón antes de moverlo
                 // ¿Salió por donde se va a sacar? (la misma línea de fondo, la misma banda y cerca)
                 var outOk = outNow && (r.type === 'throw' ? ((ball.y < 50) === (r.spot.y < 50) && (ball.y < -0.2 || ball.y > 100.2) && Math.abs(ball.x - r.spot.x) * M_X < 12)
                     : ((ball.x < 50) === (r.spot.x < 50) && (ball.x < -0.2 || ball.x > 100.2) && (r.type === 'goalkick' || (ball.y < 50) === (r.spot.y < 50))));
@@ -3772,6 +3859,8 @@
                     r.preDone = 2; r.t = Math.min(r.t, 0.2); return;
                 }
                 if (r.preDone === 2 && ball.state === 'flight') return;
+                // Alguien la toca antes de que salga (un defensor despeja a córner, un delantero la pierde por la línea...).
+                if (ball.state !== 'flight' && simFetch(r, oppOf(r.side))) return;
                 var to;
                 if (r.type === 'corner') to = { x: r.spot.x > 50 ? 101.6 : -1.6, y: r.spot.y < 50 ? 5 + rng() * 14 : 81 + rng() * 14 };
                 else if (r.type === 'goalkick') to = { x: r.spot.x > 50 ? 101.6 : -1.6, y: rng() < 0.5 ? 22 + rng() * 18 : 60 + rng() * 18 };
@@ -3794,7 +3883,8 @@
         var tgt = r.foulAt || r.spot;
         var dB = mDist(ball.x, ball.y, tgt.x, tgt.y);
         if (ball.state !== 'flight' && dB <= 3.5) { if (!r.foulAt) r.spot = { x: clamp(ball.x, 1, 99), y: clamp(ball.y, 1, 99) }; go(); return; }
-        if (!r.launched && (ball.state !== 'flight' || r.t > 1.4)) {
+        if (!r.launched && (ball.state !== 'flight' || (r.t > 2.2 && !(ball.fl && ball.fl.dur - ball.fl.t < 1.4 && r.t < 5)))) {
+            if (ball.state !== 'flight' && simFetch(r, r.side, 1.6)) return;
             var recv = nearestOf(sideKeys(r.side, true), tgt.x, tgt.y);
             if (ball.state === 'held') { ball.state = 'free'; ball.owner = null; }
             launchBall({ x: tgt.x, y: tgt.y }, dB > 30 ? 'lofted' : 'ground', recv);
@@ -3818,6 +3908,7 @@
         if (r.from) { var fv = simVisOf(r.from.x, r.from.y); ex.from = { x: fv.x, y: fv.y }; }
         if (r.whistleNs != null) ex.whistle = r.whistleNs;
         if (r.need) ex.need = r.need;
+        if (r.auto || r.optional) ex.auto = true;
         return ex;
     }
 
@@ -4420,17 +4511,17 @@
             if (p.kind === 'sub') t = Math.max(t, 4.6);
             return t;
         });
-        var KICK = 1.6, EXIT = 26;
+        var KICK = 1.6, EXIT = 32;
         var total = KICK + segDur.reduce(function (a, b) { return a + b; }, 0) + EXIT;
         // Margen: los goles y remates que llegan tarde alargan su jugada (el final nunca se corta); luego se recorta a lo usado.
-        var S = Math.ceil(total * 1.4 / SAMPLE_DT) + 3;
+        var S = Math.ceil(total * 1.9 / SAMPLE_DT) + 3;
         var X = new Float32Array(S * N), Y = new Float32Array(S * N), V = new Uint8Array(S * N), F = new Uint8Array(S * N);
         var BX = new Float32Array(S), BY = new Float32Array(S), BH = new Float32Array(S), BS = new Int8Array(S), BO = new Int16Array(S);
         var segs = [];
         // Guardar el estado vivo y simular en un mundo aparte.
         var saved = { playerState: playerState, ball: ball, refState: refState, motor: motor, ends: ends.flipped };
         simulating = true; simClock = 0; simSeed = 12345; simLeavers = {}; simScene = null; simFlipped = false;
-        simDbg = []; simRestart = null; simEvents = []; simNs = 0; simGoalPlay = false; simAttackSide = 'home'; simExiting = false; simInitAR();
+        simDbg = []; simJerks = []; simRestart = null; simEvents = []; simNs = 0; simGoalPlay = false; simAttackSide = 'home'; simExiting = false; simInitAR();
         simStaff = [{ on: false, x: 0, y: 0, vx: 0, vy: 0, spd: 5 }, { on: false, x: 0, y: 0, vx: 0, vy: 0, spd: 5 }, { on: false, x: 0, y: 0, vx: 0, vy: 0, spd: 2 }];
         var ns = 0;
         try {
@@ -4518,6 +4609,17 @@
                 var h = lh.hist[i];
                 var p = play.minute === 'tanda' || play.kind === 'shootout' || play.kind === 'shootout-kick' ? period : periodOf(play);
                 if ((p % 2 === 0) !== simFlipped) finishPending();
+                // Lo narrado en la jugada anterior (falta, córner, remate tras la falta...) termina dentro de su
+                // propio tramo: así la narración nunca cuenta algo que el campo aún no ha enseñado.
+                else if (play.kind !== 'sub') {
+                    var prevSegD = segs[segs.length - 1];
+                    if (prevSegD && prevSegD.i >= 0) {
+                        var tD = simClock + 9, movedD = false;
+                        var busyD = function () { if ((motor.phase && isKoPhase(motor.phase)) || (motor.phases || []).some(isKoPhase) || (motor.action && motor.action.type === 'koPass') || ball.goalNet || motor.holdNext) return false; return (simRestart && !simRestart.auto) || motor.phase || (motor.phases && motor.phases.length) || motor.action || (motor.actions && motor.actions.length); };
+                        while (busyD() && simClock < tD) { advance(0.2, { attack: simAttackSide, frozen: false, search: false }); movedD = true; }
+                        if (movedD) { prevSegD.s1 = ns; prevSegD.drained = true; }
+                    }
+                }
                 var seg = { i: i, s0: ns, kind: play.kind, period: p, cut: false };
                 // Cambio de campo: cada uno aparece ya en su mitad (la reproducción lo funde a negro y vuelve).
                 if ((p % 2 === 0) !== simFlipped) { simFlipped = !simFlipped; seg.flip = true; seg.jumpFlip = true; }
@@ -4567,6 +4669,33 @@
                     // que aún no se hizo no se pierde: se guarda y se hace al volver a jugar (pase atrás).
                     var pendKo = (motor.phase ? [motor.phase] : []).concat(motor.phases || []);
                     var koI0 = pendKo.findIndex(isKoPhase);
+                    // Los cambios se hacen con el balón parado: si está en juego, antes sale por la banda
+                    // (lo manda fuera el que lo tiene o el más cercano) y el saque de banda espera al cambio.
+                    var inPitch = ball.x > 0.5 && ball.x < 99.5 && ball.y > 0.5 && ball.y < 99.5;
+                    if (!simRestart && !ball.goalNet && koI0 < 0 && !koOwed && !seg.jumpFlip && inPitch && mDist(ball.x, ball.y, 50, 50) > 2.5) {
+                        var keepPh = motor.phases || [];
+                        var ctxLive = { attack: simAttackSide, frozen: false, search: false };
+                        motor.phases = []; motor.phase = null; motor.actions = []; motor.action = null; motor.waitRestart = false;
+                        var tW = simClock + 2.5;
+                        while (ball.state === 'flight' && simClock < tW) advance(0.1, ctxLive);
+                        var allK = sideKeys('home', false).concat(sideKeys('away', false));
+                        var kkS = ball.state === 'held' && ball.owner && playerState[ball.owner] ? ball.owner : nearestOf(allK.filter(function (k) { return playerState[k].pos !== 'GK'; }), ball.x, ball.y);
+                        var tF = simClock + 2.5;
+                        while (!simRestart && kkS && playerState[kkS] && ball.owner !== kkS && simClock < tF) {
+                            var kst = playerState[kkS]; kst.tx = kst.hx = ball.x; kst.ty = kst.hy = ball.y; kst.pend = null; kst.spd = Math.max(kst.spd || 0, 6);
+                            advance(0.1, ctxLive);
+                        }
+                        if (!simRestart && ball.state !== 'flight' && ball.x > 0 && ball.x < 100 && ball.y > 0 && ball.y < 100) {
+                            var kso = kkS && playerState[kkS];
+                            if (kso) { ball.state = 'held'; ball.owner = kkS; }
+                            var toOut = { x: clamp(ball.x + (kso ? (kso.side === 'home' ? 1 : -1) : 0) * (4 + rng() * 6) / M_X, 3, 97), y: ball.y < 50 ? -2.5 : 102.5 };
+                            launchBall(toOut, mDist(ball.x, ball.y, toOut.x, toOut.y) > 25 ? 'lofted' : 'ground', null);
+                            var tO = simClock + 3.5;
+                            while (!simRestart && simClock < tO) advance(0.1, ctxLive);
+                        }
+                        motor.phases = keepPh;
+                    }
+                    seg.subS = ns;
                     if (koI0 >= 0 && !seg.jumpFlip) {
                         koOwed = pendKo.slice(koI0).filter(isKoPhase).map(function (q) { var o = Object.assign({}, q); o.ms = Math.min(o.ms || 700, 900); o.late = true; return o; });
                         // Mientras se hace el cambio, el balón vuelve al centro (de un envío, no aparece allí).
@@ -4775,8 +4904,19 @@
             simExiting = true;
             motor.phases = []; motor.phase = null; motor.waitRestart = false; motor.actions = []; motor.action = null;
             Object.keys(playerState).forEach(function (k) { simLeave(k, 'exit'); });
-            var rt = simLogOfVis(50, 106); refState.tx = rt.x; refState.ty = rt.y; refState.spd = 2.4;
-            advance(EXIT, { frozen: true });
+            var rt = simLogOfVis(50, 106);
+            // El árbitro recoge el balón y se lo lleva al vestuario.
+            ball.state = 'free'; ball.fl = null; ball.h = 0; ball.owner = null; ball.lock = true; ball.goalNet = false;
+            ball.x = clamp(ball.x, -1.5, 101.5); ball.y = clamp(ball.y, -1.5, 101.5);
+            refState.tx = ball.x; refState.ty = ball.y; refState.spd = 6;
+            var refGot = false; tl0Got = -1;
+            advance(EXIT, { frozen: true }, function () {
+                if (!refGot && mDist(refState.x, refState.y, ball.x, ball.y) < 1.3) { refGot = true; tl0Got = ns; refState.tx = rt.x; refState.ty = rt.y; refState.spd = 3.2; }
+                if (!refGot) { refState.tx = ball.x; refState.ty = ball.y; }
+                else { ball.x = refState.x + 0.5; ball.y = refState.y + 0.6; ball.state = 'free'; ball.h = 0.4; }
+            });
+            var tMore = simClock + 16;
+            while (simClock < tMore && simVisOf(refState.x, refState.y).y < 104) advance(0.2, { frozen: true }, function () { if (refGot) { ball.x = refState.x + 0.5; ball.y = refState.y + 0.6; } });
             ex.s1 = ns; ex.pose = ns - 1;
             segs.push(ex);
         } finally {
@@ -4787,6 +4927,9 @@
         var ri = fidx.REF;
         var exSeg = segs[segs.length - 1];
         for (var s = exSeg.s0; s < ns; s++) if (Y[s * N + ri] > 103.5) V[s * N + ri] = 0;
+        // ...y el balón se va con él.
+        var ballGoneS = null;
+        for (var sb = exSeg.s0; sb < ns; sb++) if (!V[sb * N + ri] && tl0Got >= 0 && sb > tl0Got) { ballGoneS = sb; break; }
         [fidx.AR1, fidx.AR2].forEach(function (ai) { for (var s2 = exSeg.s0; s2 < ns; s2++) if (Y[s2 * N + ai] > 103.5 || Y[s2 * N + ai] < -3.5) V[s2 * N + ai] = 0; });
         var segByPlay = {};
         // Huecos (figura aún no en el campo o ya retirada): se rellenan con su posición más cercana,
@@ -4826,7 +4969,7 @@
             reacts.push({ i: sg.i, s: key });
         });
         reacts.sort(function (a, b) { return a.s - b.s; });
-        return { scoreTimes: scoreTimes, reacts: reacts, events: simEvents.slice(), figs: figs, fidx: fidx, N: N, S: ns, X: X, Y: Y, V: V, F: F, BX: BX, BY: BY, BH: BH, BS: BS, BO: BO,
+        return { ballGoneS: ballGoneS, jerks: simJerks.slice(), scoreTimes: scoreTimes, reacts: reacts, events: simEvents.slice(), figs: figs, fidx: fidx, N: N, S: ns, X: X, Y: Y, V: V, F: F, BX: BX, BY: BY, BH: BH, BS: BS, BO: BO,
             segs: segs, segByPlay: segByPlay, squad: lh.squad, ms: performance.now() - t0, plays: plays.length,
             fixedPasses: segs.reduce(function (a, sg) { return a + (sg.fixed || 0); }, 0) };
     }
@@ -5035,7 +5178,8 @@
             pb.sad = sad;
         }
         if (tl.events && pb.lastS >= 0 && !pb.snap && s > pb.lastS && s - pb.lastS < 25) {
-            for (var ei = 0; ei < tl.events.length; ei++) { var ev = tl.events[ei]; if (ev.s > pb.lastS && ev.s <= s) showTag(ev); }
+            for (var ei = 0; ei < tl.events.length; ei++) { var ev = tl.events[ei]; if (ev.s > pb.lastS && ev.s <= s) { showTag(ev); fillFromEvent(ev, vseg); } }
+            fillFromBall(vseg, pb.lastS, s);
         }
         if (tl.reacts && pb.lastS >= 0 && !pb.snap && s > pb.lastS && s - pb.lastS < 25) {
             var dR = data(), plR = dR ? buildPlays(dR) : [];
@@ -5103,7 +5247,7 @@
         pb.dispB[0] = bx; pb.dispB[1] = by;
         ball.x = bx; ball.y = by; ball.h = bh;
         placeBallVis(bx, by, bh);
-        if (ballEl) { var bd = swapNow ? 'none' : ''; if (ballEl.style.display !== bd) ballEl.style.display = bd; }
+        if (ballEl) { var bd = swapNow || (tl.ballGoneS != null && s >= tl.ballGoneS) ? 'none' : ''; if (ballEl.style.display !== bd) ballEl.style.display = bd; }
         stepManagers(dt, performance.now());
     }
 
@@ -5177,7 +5321,10 @@
                 '</div>' +
                 '<div class="campo-team away"><span id="campo-away-name">Visitante</span><span class="campo-swatch" id="campo-away-swatch"></span></div>' +
             '</div>' +
-            '<div class="campo-pitch-box" id="campo-pitch-box"></div>' +
+            '<div class="campo-pitch-box" id="campo-pitch-box">' +
+                '<span class="campo-beta" title="Vista 2D en desarrollo: no es la versión definitiva">Fase Beta</span>' +
+                '<button type="button" class="campo-resume" id="campo-resume" hidden>Iniciar segunda parte</button>' +
+            '</div>' +
             '<div class="campo-caption" id="campo-caption">Pega un informe y pulsa «Comenzar partido» para ver el movimiento.</div>' +
             '<div class="campo-controls">' +
                 '<button type="button" id="campo-play">Comenzar</button>' +
@@ -5185,10 +5332,10 @@
                 '<button type="button" id="campo-fs" class="campo-fs-btn" title="Ver el campo a pantalla completa (en el móvil, gíralo en horizontal)">Ampliar</button>' +
                 '<input type="range" class="campo-slider" id="campo-slider" min="0" max="90" value="0" step="1" aria-label="Jugada">' +
             '</div>' +
-            '<p class="campo-note">Los movimientos son aproximados: el informe no trae coordenadas. Los jugadores se desplazan en bloque hacia la jugada y el balón sigue a quienes nombra la narración.</p>';
+            '<p class="campo-note"><b>Fase Beta:</b> esta forma de ver los partidos está en desarrollo y no es definitiva. Los movimientos son aproximados (el informe no trae coordenadas): los jugadores se mueven según lo que cuenta la narración y el resto se rellena con jugadas verosímiles.</p>';
         root.appendChild(wrap);
         drawPitch();
-        $('campo-pitch-box').appendChild(svg);
+        $('campo-pitch-box').insertBefore(svg, $('campo-pitch-box').firstChild);
         ui.play = $('campo-play');
         ui.min = $('campo-min');
         ui.slider = $('campo-slider');
@@ -5200,6 +5347,11 @@
         ui.awaySwatch = $('campo-away-swatch');
 
         ui.fs = $('campo-fs');
+        ui.resume = $('campo-resume');
+        ui.resume.addEventListener('click', function () {
+            ui.resume.hidden = true;
+            if (typeof window.resumeAfterBreak === 'function') window.resumeAfterBreak();
+        });
         ui.play.addEventListener('click', onPlayClick);
         ui.fs.addEventListener('click', toggleExpanded);
         document.addEventListener('fullscreenchange', function () {
@@ -5396,6 +5548,54 @@
             '<span>' + escapeHtml((d.awayTeam || 'Visitante').split(' ')[0]) + ' ' + marks.away.trim() + '</span>';
     }
 
+    // Relleno narrado: lo que no cuenta la narración (saques de banda, de puerta, recuperaciones en los
+    // minutos sin ocasiones) sale en el texto bajo el campo, sacado de lo que pasa en el campo.
+    var fillNote = null;
+    function teamLabel(side) { var d = tlData || data() || {}; return side === 'home' ? (d.homeTeam || 'el local') : (d.awayTeam || 'el visitante'); }
+    function figName(f) { var fg = tl && tl.figs[f]; if (!fg || !fg.name) return ''; var d = tlData || {}; return shortName(fg.name, d.formatName, false); }
+    function ownerAfter(s0, n) { for (var q = s0; q < Math.min(tl.S, s0 + n); q++) if (tl.BO[q] >= 0) return tl.BO[q]; return -1; }
+    function setFill(seg, text) {
+        fillNote = { k: seg.k, text: text };
+        if (!ui.caption) return;
+        var sp = ui.caption.querySelector('.campo-fill');
+        if (!sp) { sp = document.createElement('span'); sp.className = 'campo-fill'; ui.caption.appendChild(document.createTextNode(' ')); ui.caption.appendChild(sp); }
+        sp.textContent = text;
+    }
+    function fillFromEvent(ev, seg) {
+        if (!seg || seg.i < 0) return;
+        var plays = tlData ? buildPlays(tlData) : [], pl = plays[seg.i];
+        if (!pl || !(ev.auto || pl.filler)) return;
+        var f = -1, q, fi;
+        if (ev.type === 'goalkick') { for (fi = 0; fi < tl.N; fi++) if (tl.figs[fi].side === ev.side && tl.figs[fi].pos === 'GK' && tl.V[ev.s * tl.N + fi]) { f = fi; break; } }
+        else if (ev.type === 'throw') { for (q = ev.s; q < Math.min(tl.S, ev.s + 40) && f < 0; q++) for (fi = 0; fi < tl.N; fi++) if (tl.F[q * tl.N + fi] === 5) { f = fi; break; } }
+        else f = ownerAfter(ev.s, 40);
+        if (f >= 0 && tl.figs[f].side !== ev.side) f = -1;
+        var who = f >= 0 ? figName(f) : '', team = teamLabel(ev.side);
+        var txt = null;
+        if (ev.type === 'throw') txt = 'Saque de banda para ' + team + (who ? ': lo pone en juego ' + who : '') + '.';
+        else if (ev.type === 'goalkick') txt = 'Saque de puerta' + (who ? ' de ' + who : ' para ' + team) + '.';
+        else if (ev.type === 'corner') txt = 'Córner para ' + team + (who ? ', lo saca ' + who : '') + '.';
+        else if (ev.type === 'free') txt = 'Falta a favor de ' + team + '.';
+        if (txt) setFill(seg, txt);
+    }
+    function fillFromBall(seg, a, b) {
+        if (!seg || seg.i < 0 || !tlData) return;
+        var pl = buildPlays(tlData)[seg.i];
+        if (!pl || !pl.filler) return;
+        var q0 = Math.max(seg.s0 + 1, Math.floor(a) + 1), q1 = Math.min(Math.floor(b), seg.s1 - 1);
+        for (var q = q0; q <= q1; q++) {
+            var o = tl.BO[q];
+            if (o < 0 || o === pb.fillOwner) continue;
+            var prev = pb.fillOwner; pb.fillOwner = o;
+            var fo = tl.figs[o], fp = prev != null && prev >= 0 ? tl.figs[prev] : null;
+            if (!fo || fo.type !== 'player') continue;
+            if (fp && fp.side !== fo.side && !recentRestart(q)) setFill(seg, figName(o) + ' recupera el balón para ' + teamLabel(fo.side) + '.');
+            else if (fp && fp.side === fo.side && rngFill(q) < 0.35) setFill(seg, teamLabel(fo.side) + ' toca y toca: ' + figName(o) + ' recibe.');
+        }
+    }
+    function recentRestart(q) { for (var i = 0; i < tl.events.length; i++) { var e = tl.events[i]; if (e.s <= q && e.s > q - 45 && /^(throw|goalkick|corner|free|wall|offside|kickoff|kokick|penalty)$/.test(e.type)) return true; } for (var k = Math.max(0, q - 25); k <= q; k++) if (tl.BS[k] === 5) return true; return false; }
+    function rngFill(q) { var x = Math.sin(q * 12.9898) * 43758.5453; return x - Math.floor(x); }
+
     function setCaption(play, d) {
         if (!ui.caption) return;
         if (!play) {
@@ -5413,9 +5613,17 @@
         if (play.kickoffBefore && play.kickoffLabel) pre = '<span class="campo-kind kickoff lead" title="Antes de esta jugada">' + escapeHtml(play.kickoffLabel) + '</span> ';
         var laneTxt = play.lane === 'L' ? 'por la izquierda' : play.lane === 'R' ? 'por la derecha' : play.lane === 'C' ? 'por el centro' : '';
         var laneChip = laneTxt ? ' <span class="campo-lane" title="Zona deducida de la narración (vista del equipo que ataca)">' + laneTxt + '</span>' : '';
-        ui.caption.innerHTML = pre + '<span class="campo-kind ' + kind + '">' + escapeHtml(label) + '</span>' + laneChip + ' ' + escapeHtml(text);
+        var segC = tl && tl.segByPlay ? tl.segByPlay[play.i] : null;
+        var fill = fillNote && segC && fillNote.k === segC.k ? fillNote.text : '';
+        if (play.filler) {
+            ui.caption.innerHTML = pre + '<span class="campo-kind fill">Sin ocasiones</span> <span class="campo-fill">' + escapeHtml(fill || (teamLabelOfPlay(play, d) + ' mueve el balón sin buscar todavía la portería.')) + '</span>';
+        } else {
+            ui.caption.innerHTML = pre + '<span class="campo-kind ' + kind + '">' + escapeHtml(label) + '</span>' + laneChip + ' ' + escapeHtml(text) + (fill ? ' <span class="campo-fill">' + escapeHtml(fill) + '</span>' : '');
+        }
         lastKind = kind;
     }
+
+    function teamLabelOfPlay(play, d) { return String(play.team || (d && d.homeTeam) || 'equipo'); }
 
     function summarize(text) {
         var lines = String(text || '').split(/\n/).map(function (l) {
@@ -5756,6 +5964,7 @@
             ensureUI();
         }
         if (dragging) return;
+        if (watchPending) checkWatchPending(d);
         // Durante un salto del deslizador la narración avanza a toda velocidad hasta la jugada elegida:
         // el campo ya muestra esa jugada (colocada al soltar), así que no se anima el avance rápido.
         if (d.seeking) return;
@@ -5888,8 +6097,140 @@
         }, 400);
     }
 
+    // «Colores suplentes»: se vuelven a dibujar los círculos (y banquillos) sin tocar la reproducción.
+    function refreshColors() {
+        var d = data();
+        if (!d || !tl || !tlNodes || !playersLayer) { lastSignature = ''; refresh(); return; }
+        tlNodes.forEach(function (node) {
+            if (node.f.type !== 'player') return;
+            var el = buildPlayerNode({ name: node.f.name, side: node.f.side, pos: node.f.pos }, d, { x: 50, y: 50 });
+            addGestures(el);
+            el.setAttribute('transform', node.el.getAttribute('transform') || '');
+            el.style.display = node.el.style.display;
+            el.style.opacity = node.el.style.opacity;
+            if (node.el.parentNode) node.el.parentNode.replaceChild(el, node.el);
+            node.el = el; node.flag = -1; node.fade = null;
+        });
+        applyCompactNames();
+        benchSig = '';
+        drawBenches(d);
+        updateChrome(d, currentPlay(d));
+    }
+
+    // Icono de tele de «Eventos»: reproduce ese gol en la Vista 2D desde el principio de su jugada.
+    var watchPending = null;
+    function watchGoal(label, player) {
+        var d = data();
+        if (!d) return false;
+        var plays = buildPlays(d);
+        var lbl = String(label == null ? '' : label).replace(/[^0-9+]/g, '');
+        var pl = String(player || '').toLowerCase();
+        var goals = plays.filter(function (p) { return p.kind === 'goal' || p.kind === 'own-goal'; });
+        var hit = goals.filter(function (p) { return String(p.minute) === lbl && (!pl || String(p.text).toLowerCase().indexOf(pl.split(' ').pop()) !== -1); })[0]
+            || goals.filter(function (p) { return String(p.minute) === lbl; })[0]
+            || goals.filter(function (p) { return parseInt(p.minute, 10) === parseInt(lbl, 10); })[0];
+        if (!hit) return false;
+        ensureUI();
+        refresh();
+        if (hit.i === 0) {
+            if (typeof window.resetSimulation === 'function') window.resetSimulation();
+            if (typeof window.startSimulation === 'function') window.startSimulation();
+            return true;
+        }
+        var prev = plays[hit.i - 1];
+        watchPending = { i: hit.i, prev: prev.i, t: performance.now() };
+        keepViewOnReset = true;
+        lastPlayIndex = prev.i;
+        if (typeof window.seekSimulationTo === 'function') window.seekSimulationTo(prev.minute, prev.i);
+        return true;
+    }
+    // Al terminar el salto (narración parada justo antes del gol): el campo se coloca al final de la
+    // jugada anterior y la reproducción sigue sola, con el gol narrado y animado a la vez.
+    function checkWatchPending(d) {
+        if (!watchPending || !d || d.seeking) return;
+        if (performance.now() - watchPending.t > 20000) { watchPending = null; return; }
+        if (!tl || !d.paused) return;
+        var plays = buildPlays(d);
+        var prev = plays[watchPending.prev];
+        watchPending = null;
+        if (!prev) return;
+        tlGoto(prev, true, d);
+        var sg = tl.segByPlay[prev.i];
+        if (sg) { pb.s = Math.max(sg.s0, segLimit(sg) - 1); pb.lastS = pb.s; }
+        lastPlayIndex = prev.i;
+        if (typeof window.togglePause === 'function') window.togglePause();
+    }
+
+    // Sin spoilers: cada línea de la narración espera a que el campo haya enseñado lo que cuenta
+    // (el remate cuando sale el disparo, el desenlace cuando llega el balón, el «¡Gol!» con el gol).
+    var SHOT_LINE_RE = /remate|remata\b|chuta|\bchut\b|disparo|dispara\b|prueba fortuna|zapatazo|ca[ñn]onazo|volea|busca puerta|define |cabezazo|cabecea|lanza el penalti|tira el penalti|golpea el bal|sale el disparo/i;
+    var GOAL_LINE_RE = /¡+gol|go{3,}l|(?:^|[^\wáéíóúñ])¡?gol(?:es)?\b/i;
+    function normLine(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
+    function segReveal(seg) {
+        if (seg.reveal) return seg.reveal;
+        var lines = ((tlData && tlData.plays && tlData.plays[seg.i]) || {}).lines || [];
+        var L = Math.max(1, lines.length), lim = segLimit(seg), s0 = seg.s0;
+        var strike = -1, fEnd = -1, q;
+        for (q = s0; q <= lim; q++) if (tl.BS[q] === 4) { strike = q; break; }
+        if (strike >= 0) { for (q = strike; q <= lim && tl.BS[q] === 4; q++); fEnd = Math.min(q, lim); }
+        var shotK = -1, goalK = -1;
+        for (var k = 1; k < lines.length; k++) {
+            var tx = lines[k].replace(/^.*?:\s*/, '');
+            if (goalK < 0 && GOAL_LINE_RE.test(tx) && !/ocasi[oó]n|anula/i.test(tx)) goalK = k;
+            if (shotK < 0 && SHOT_LINE_RE.test(tx)) shotK = k;
+        }
+        var rv = [], key = [];
+        for (var j = 0; j < L; j++) {
+            var base = s0 + (lim - s0) * j / L - 6, isKey = false, r = base;
+            if (strike >= 0 && shotK > 0) {
+                if (j < shotK) r = Math.min(base, strike - 2);
+                else if (j === shotK) { r = strike; isKey = true; }
+                else { r = Math.max(base, fEnd); isKey = j === shotK + 1; }
+            }
+            if (goalK > 0 && seg.goalS != null && j >= goalK) { r = Math.max(r, seg.goalS); if (j === goalK) isKey = true; }
+            r = Math.min(r, lim);
+            if (j && r < rv[j - 1]) r = rv[j - 1];
+            rv.push(r); key.push(isKey);
+        }
+        seg.reveal = { s: rv, key: key, lines: lines.map(normLine) };
+        return seg.reveal;
+    }
+    function lineReady(info) {
+        if (!tl || !pb.seg || !isShown() || dragging || pb.fadeSt) return true;
+        var clock = window.getCampoClock ? window.getCampoClock() : {};
+        if (clock.seeking || clock.paused || clock.finished) return true;
+        var seg = pb.seg;
+        if (seg.i < 0 || seg.kind === 'shootout' || seg.kind === 'shootout-kick') return true;
+        if (lastPlayIndex !== seg.i) return true;
+        if (info.minute || info.marker) return pb.s >= segLimit(seg) - 6;
+        var rv = segReveal(seg), raw = normLine(info.raw);
+        var k = info.k;
+        if (rv.lines[k] !== raw) { k = rv.lines.indexOf(raw); if (k < 0) return true; }
+        return pb.s >= rv.s[k];
+    }
+
+    // Pausa entre partes: botón encima del campo («Iniciar segunda parte», «Iniciar prórroga»...).
+    function showResume(label) {
+        ensureUI();
+        if (!ui.resume) return false;
+        ui.resume.textContent = label;
+        ui.resume.hidden = false;
+        return true;
+    }
+    function hideResume() { if (ui.resume) ui.resume.hidden = true; }
+    function isShown() {
+        var tab = $('campo-tab');
+        return !!(tab && tab.classList.contains('active') && tl && !window.__campoNoChoreo);
+    }
+
     window.Campo = {
         refresh: refresh,
+        refreshColors: refreshColors,
+        watchGoal: watchGoal,
+        showResume: showResume,
+        hideResume: hideResume,
+        isShown: isShown,
+        lineReady: lineReady,
         onShow: onShow,
         resetView: resetView,
         // Solo para pruebas: deja el campo en la fase k de la jugada i (sin animación).
@@ -6015,7 +6356,7 @@
             return { seg: sg.i, kind: sg.kind };
         },
         debugScoreAt: function (s) { var d = data(); return d ? String(tlScoreText(s, d) || '').replace(/\s*\(.*\)/, '').replace(/\s/g, '') : null; },
-        debugTl: function () { var d = data(); return { tl: tl, plays: d ? buildPlays(d) : [], d: d, M_X: M_X, M_Y: M_Y, PITCH: PITCH, nodeScale: nodeScale }; },
+        debugTl: function () { var d = data(); return { tl: tl, pb: pb, plays: d ? buildPlays(d) : [], d: d, M_X: M_X, M_Y: M_Y, PITCH: PITCH, nodeScale: nodeScale }; },
         debugBuild: function () { var t0 = performance.now(); buildTimeline(tlData); return Math.round(performance.now() - t0); },
         debugBall: function (a, b) {
             var out = []; for (var q = a; q < Math.min(b, tl.S); q++) out.push(q + ':' + tl.BX[q].toFixed(1) + ',' + tl.BY[q].toFixed(1) + ',' + tl.BH[q].toFixed(1) + ',' + tl.BS[q] + ',' + tl.BO[q] + ',' + simDbg[q]);

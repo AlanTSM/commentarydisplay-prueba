@@ -1591,6 +1591,41 @@
         .view-more-link:hover {
             background: rgba(157, 78, 221, 0.5);
         }
+        .goal-links {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .goal-links .view-more-link { position: static; }
+        .view-2d-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            padding: 3px 6px;
+            border-radius: 3px;
+            background: rgba(157, 78, 221, 0.3);
+            transition: all 0.2s;
+            cursor: pointer;
+            line-height: 0;
+        }
+        .view-2d-link:hover { background: rgba(157, 78, 221, 0.5); }
+        .tab .tab-beta {
+            display: inline-block;
+            margin-left: 4px;
+            padding: 0 5px;
+            border-radius: 6px;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            vertical-align: 2px;
+            background: #f59e0b;
+            color: #1a1a1a;
+        }
 
         /* Popup para ver más detalles de gol */
         .popup-overlay {
@@ -2775,10 +2810,10 @@
             <div class="tabs">
                 <div class="tab active" onclick="switchTab('lineups-tab')">Alineaciones</div>
                 <div class="tab" onclick="switchTab('stats-tab')">Estadísticas</div>
-                <div class="tab" onclick="switchTab('highlights-tab')">Eventos destacados</div>
+                <div class="tab" onclick="switchTab('highlights-tab')">Eventos</div>
                 <div class="tab" onclick="switchTab('ratings-tab')">Puntuaciones</div>
-                <div class="tab" onclick="switchTab('experience-tab')">Pts. de exp.</div>
-                <div class="tab" onclick="switchTab('campo-tab')">Vista de campo</div>
+                <div class="tab" onclick="switchTab('experience-tab')">Pts. Exp.</div>
+                <div class="tab" onclick="switchTab('campo-tab')">Vista 2D <span class="tab-beta" title="En desarrollo: no es la versión definitiva">Beta</span></div>
                 <span class="settings-icon" onclick="openSettingsPopup()">⚙️</span>
             </div>
 
@@ -3187,6 +3222,7 @@
         let campoSeekPlayIndex = null;
         let campoSeekUntilLine = null;
         let campoPlaysStarted = 0;
+        let lineGateSince = 0;
         let rawInput = '';
         let showAlternateColorsField = true;
         let currentTheme = 'actual';
@@ -3678,7 +3714,10 @@
             });
 
             document.getElementById(tabId).classList.add('active');
-            event.target.classList.add('active');
+            const evTab = (typeof event !== 'undefined' && event && event.target && event.target.closest) ? event.target.closest('.tab') : null;
+            const tabEl = (evTab && (evTab.getAttribute('onclick') || '').indexOf(tabId) !== -1) ? evTab
+                : Array.from(tabs).find(t => (t.getAttribute('onclick') || '').indexOf("'" + tabId + "'") !== -1);
+            if (tabEl) tabEl.classList.add('active');
 
             if (tabId === 'lineups-tab') {
                 if (currentHomeStarters.length && currentAwayStarters.length) {
@@ -4570,7 +4609,7 @@
                     if (goalScore) {
                         eventTypeText += ` (${goalScore})`;
                     }
-                    viewMoreLink = `<a class="view-more-link" onclick="showGoalPopup('${event.label || event.minute}', '${popupArg(event.player)}')">Ver más</a>`;
+                    viewMoreLink = `<span class="goal-links"><a class="view-2d-link" title="Ver el gol en la Vista 2D" aria-label="Ver el gol en la Vista 2D" onclick="watchGoal2D('${event.label || event.minute}', '${popupArg(event.player)}')"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="2.5" y="6" width="19" height="13" rx="2.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 2.5l4 3.5 4-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.2 9.6v5.8l4.8-2.9z" fill="currentColor"/></svg></a><a class="view-more-link" onclick="showGoalPopup('${event.label || event.minute}', '${popupArg(event.player)}')">Ver más</a></span>`;
                     break;
                 case 'ownGoal': 
                     eventTypeText = 'GOL EN PROPIA PUERTA';
@@ -4579,7 +4618,7 @@
                     if (ownGoalScore) {
                         eventTypeText += ` (${ownGoalScore})`;
                     }
-                    viewMoreLink = `<a class="view-more-link" onclick="showGoalPopup('${event.label || event.minute}', '${popupArg(event.player)}')">Ver más</a>`;
+                    viewMoreLink = `<span class="goal-links"><a class="view-2d-link" title="Ver el gol en la Vista 2D" aria-label="Ver el gol en la Vista 2D" onclick="watchGoal2D('${event.label || event.minute}', '${popupArg(event.player)}')"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="2.5" y="6" width="19" height="13" rx="2.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 2.5l4 3.5 4-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.2 9.6v5.8l4.8-2.9z" fill="currentColor"/></svg></a><a class="view-more-link" onclick="showGoalPopup('${event.label || event.minute}', '${popupArg(event.player)}')">Ver más</a></span>`;
                     break;
                 case 'redCard': 
                     eventTypeText = 'TARJETA ROJA'; 
@@ -5153,9 +5192,44 @@
             }
             
             updateNarrationColors();
+            updatePossessionBar();
             if (document.getElementById('lineups-tab').classList.contains('active') && currentHomeStarters.length) {
                 renderLineups();
             }
+            if (window.Campo && typeof Campo.refreshColors === 'function') Campo.refreshColors();
+        }
+
+        // Si los dos equipos visten de forma parecida, el visitante usa sus colores suplentes
+        // (se marca su casilla «Colores suplentes»; el usuario puede desmarcarla).
+        function hexToRgbCD(hex) {
+            let c = String(hex || '').trim().replace('#', '');
+            if (c.length === 3) c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2];
+            if (!/^[0-9a-f]{6}$/i.test(c)) return null;
+            return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)];
+        }
+        function kitDistanceCD(a, b) {
+            const A = hexToRgbCD(a), B = hexToRgbCD(b);
+            if (!A || !B) return 999;
+            // distancia «perceptiva» sencilla (pesos del rojo/verde/azul)
+            const rm = (A[0] + B[0]) / 2, dr = A[0] - B[0], dg = A[1] - B[1], db = A[2] - B[2];
+            return Math.sqrt((2 + rm / 256) * dr * dr + 4 * dg * dg + (2 + (255 - rm) / 256) * db * db);
+        }
+        function kitsClashCD(h, a) {
+            if (!h || !a) return false;
+            return kitDistanceCD(h.primary, a.primary) < 150;
+        }
+        function autoAlternateColors() {
+            useAlternateColorsHome = false;
+            useAlternateColorsAway = false;
+            const hc = document.getElementById('home-alternate-colors'), ac = document.getElementById('away-alternate-colors');
+            if (hc) hc.checked = false;
+            if (ac) ac.checked = false;
+            if (manualColorsEnabled) return;
+            const h = teamColorsPrimary[homeTeamName], a = teamColorsPrimary[awayTeamName], alt = teamColorsAlternate[awayTeamName];
+            if (!h || !a || !alt || !kitsClashCD(h, a)) return;
+            if (kitDistanceCD(h.primary, alt.primary) <= kitDistanceCD(h.primary, a.primary)) return;
+            useAlternateColorsAway = true;
+            if (ac) ac.checked = true;
         }
 
         function updateNarrationColors() {
@@ -7121,6 +7195,7 @@
             document.getElementById('score').textContent = `0 - 0`;
             document.getElementById('minute').innerHTML = '<button id="startButton" onclick="startSimulation()">Comenzar partido</button>';
 
+            autoAlternateColors();
             output.style.display = 'block';
             if (window.Campo && typeof Campo.resetView === 'function') Campo.resetView();
             if (window.Campo && typeof Campo.refresh === 'function') Campo.refresh();
@@ -7138,6 +7213,8 @@
             const campoSeeking = campoSeekUntil != null;
             simulationStarted = true;
             campoPlaysStarted = 0;
+            periodBreaks = 0;
+            if (window.Campo && typeof Campo.hideResume === 'function') Campo.hideResume();
             if (!campoSeeking) playWhistleSound();
             lineIndex = 0;
             isPaused = false;
@@ -7192,6 +7269,19 @@
                         timeoutId = setTimeout(showNextLine, nextNarrationDelay());
                         return;
                     }
+                    // Vista 2D: la línea espera a que el campo enseñe lo que cuenta (sin spoilers; tope de 10 s).
+                    if (window.Campo && typeof Campo.lineReady === 'function' && line.trim() !== '' &&
+                        campoSeekUntil == null && campoSeekPlayIndex == null && campoSeekUntilLine == null) {
+                        const isMinLine = line.includes('Minuto de juego');
+                        const mk = !isMinLine && parseMarker(line);
+                        let ready = true;
+                        try { ready = Campo.lineReady({ minute: isMinLine, marker: !!mk, raw: rawLine, k: isMinLine ? 0 : currentPlayRawLines.length }); } catch (e) { ready = true; }
+                        if (!ready) {
+                            if (!lineGateSince) lineGateSince = performance.now();
+                            if (performance.now() - lineGateSince < 10000) { timeoutId = setTimeout(showNextLine, 60); return; }
+                        }
+                    }
+                    lineGateSince = 0;
                     
                     if (line.includes('Minuto de juego')) {
                         const incomingMin = (rawLine.match(/Minuto de juego\s+(\d+(?:\+\d+)?)/) || [])[1];
@@ -7308,6 +7398,7 @@
 
                         if (handleSpecialEvents(line)) {
                             lineIndex++;
+                            if (holdForPeriodBreak(line)) return;
                             timeoutId = setTimeout(showNextLine, nextNarrationDelay());
                             return;
                         }
@@ -7358,8 +7449,34 @@
             }, campoSeeking ? 0 : 1000);
         }
         
+        // Pausa entre partes en la Vista 2D: la narración espera a que el usuario pulse el botón
+        // que aparece encima del campo («Iniciar segunda parte», «Iniciar prórroga»...).
+        let periodBreaks = 0;
+        function holdForPeriodBreak(line) {
+            const marker = parseMarker(line);
+            if (!marker || !/^(half|et|etHalf|shootout)$/.test(marker.kind)) return false;
+            if (campoSeekUntil != null || campoSeekPlayIndex != null || campoSeekUntilLine != null) return false;
+            let label;
+            if (marker.kind === 'half') { periodBreaks++; label = periodBreaks === 1 ? 'Iniciar segunda parte' : 'Iniciar segunda parte de la prórroga'; }
+            else if (marker.kind === 'etHalf') { periodBreaks = Math.max(periodBreaks, 2); label = 'Iniciar segunda parte de la prórroga'; }
+            else if (marker.kind === 'et') { periodBreaks = Math.max(periodBreaks, 1); label = 'Iniciar prórroga'; }
+            else label = 'Iniciar tanda de penaltis';
+            if (!(window.Campo && typeof Campo.isShown === 'function' && Campo.isShown())) return false;
+            isPaused = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            const pauseButton = document.getElementById('pauseButton');
+            if (pauseButton) pauseButton.textContent = 'Reanudar';
+            Campo.showResume(label);
+            if (typeof Campo.refresh === 'function') Campo.refresh();
+            return true;
+        }
+        window.resumeAfterBreak = function() {
+            if (isPaused) togglePause();
+        };
+
         function togglePause() {
             isPaused = !isPaused;
+            if (!isPaused && window.Campo && typeof Campo.hideResume === 'function') Campo.hideResume();
             const pauseButton = document.getElementById('pauseButton');
 
             if (isPaused) {
@@ -7377,6 +7494,7 @@
             campoSeekUntil = null;
             campoSeekPlayIndex = null;
             campoSeekUntilLine = null;
+            if (window.Campo && typeof Campo.hideResume === 'function') Campo.hideResume();
             if (window.Campo && typeof Campo.resetView === 'function') Campo.resetView();
             simulationStarted = false;
             if (timeoutId) {
@@ -8014,6 +8132,11 @@
         };
 
         window.switchTab = switchTab;
+        // Icono de tele de la pestaña «Eventos»: abre la Vista 2D y reproduce ese gol.
+        window.watchGoal2D = function(label, player) {
+            switchTab('campo-tab');
+            if (window.Campo && typeof Campo.watchGoal === 'function') Campo.watchGoal(label, player);
+        };
         window.pasteFromClipboard = pasteFromClipboard;
         window.toggleInput = toggleInput;
         window.startSimulation = startSimulation;

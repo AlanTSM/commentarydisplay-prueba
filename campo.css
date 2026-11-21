@@ -5,7 +5,8 @@
 }
 
 .campo-wrap {
-    max-width: 1100px;
+    /* Por defecto algo más pequeño: el campo entero cabe en pantallas normales (alto disponible ≈ 1,5 × ancho). */
+    max-width: max(480px, min(900px, calc((100vh - 250px) * 1.5)));
     margin: 0 auto;
     display: flex;
     flex-direction: column;
@@ -341,3 +342,47 @@ html.campo-noscroll, html.campo-noscroll body { overflow: hidden; }
 @keyframes campo-flag-wave { from { transform: skewY(-8deg); } to { transform: skewY(8deg); } }
 .campo-tag { pointer-events: none; animation: campo-tag-in 1.9s ease-out forwards; }
 @keyframes campo-tag-in { 0% { opacity: 0; } 12% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+
+/* Sesión 21: etiqueta «Fase Beta» y botón de reanudar entre partes (encima del campo). */
+.campo-beta {
+    position: absolute;
+    top: 6px;
+    left: 8px;
+    z-index: 2;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(245, 158, 11, 0.92);
+    color: #1a1a1a;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    pointer-events: auto;
+    cursor: help;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+.campo-resume {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 3;
+    padding: 12px 22px;
+    border-radius: 10px;
+    border: 2px solid rgba(255,255,255,0.85);
+    background: rgba(83, 61, 125, 0.95);
+    color: #fff;
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.5);
+}
+.campo-resume:hover { background: rgba(110, 80, 165, 0.98); }
+.campo-resume[hidden] { display: none; }
+.campo-caption .campo-fill { opacity: 0.85; font-style: italic; }
+.campo-caption .campo-kind.fill { background: #3f3f56; }
+@media (max-width: 640px) {
+    .campo-resume { font-size: 13px; padding: 9px 14px; }
+    .campo-beta { font-size: 9px; padding: 1px 6px; }
+}
