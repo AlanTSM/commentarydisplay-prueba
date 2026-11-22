@@ -1456,14 +1456,15 @@
         else if (/segundo palo|derecha/.test(low)) y = 59;
         else if (/[áa]ngulo|escuadra/.test(low)) y = /izquier|primer/.test(low) ? 38 : 62;
         else if (/panenka|picado/.test(low)) y = 50;
-        if (result === 'goal') return { x: 98.6, y: clamp(y, 38, 62) };
-        if (result === 'save') {
-            var gy = info.gkDef ? info.gkDef.ty : 50;
-            return { x: 96.4, y: clamp(gy + (y - 50) * 0.4, 36, 64) };
-        }
-        if (/larguero/.test(low)) return { x: 96.2, y: 36 };
-        if (/poste/.test(low)) return { x: 97.2, y: y < 50 ? 34 : 66 };
-        return { x: 99.2, y: y < 50 ? 18 : 82 };
+        // Variedad sin traicionar el desenlace: si la narración no dice el lado, se elige uno.
+        var sd = y === 50 && !/panenka|picad|centro/.test(low) ? (rng() < 0.5 ? -1 : 1) : (y < 50 ? -1 : 1);
+        if (y === 50 && sd && !/panenka|picad|centro/.test(low)) y = 50 + sd * (2.4 + rng() * 2.4);
+        if (result === 'goal') return { x: 101.2, y: clamp(y, 45.6, 54.4), kind: 'shot' };
+        if (result === 'save') return { x: 99.2, y: clamp(50 + sd * (2.2 + rng() * 2), 45.5, 54.5), kind: 'shot', save: true };
+        if (/larguero|travesa/.test(low)) return { x: 99.7, y: 50 + sd * rng() * 2.5, kind: 'bar' };
+        if (/poste|(al|el|en el) palo/.test(low.replace(/(primer|segundo) palo|palo (largo|corto)/g, ' '))) return { x: 99.7, y: 50 + sd * 5.3, kind: 'shot', frame: true };
+        if (/encima|alto|nubes|grada|arriba/.test(low)) return { x: 102.6, y: 50 + sd * rng() * 3, kind: 'over' };
+        return { x: 101.6, y: 50 + sd * (7.5 + rng() * 2.5), kind: 'shot' };
     }
 
     function setupCounter(players, play, attack, ballT, opts) {
@@ -1814,15 +1815,20 @@
             });
             if (kind === 'shootout-kick') {
                 var end = shootoutBallEnd(play, info);
-                var mid = { x: lerp(spot.x, end.x, 0.55), y: lerp(spot.y, end.y, 0.55) };
+                // El portero se lanza: al balón si para; si no, muchas veces al lado contrario (engañado).
+                if (info.gkDef) {
+                    var engana = play.result !== 'save' && (end.kind !== 'shot' || Math.abs(end.y - 50) < 6) && rng() < 0.6;
+                    var gyS = play.result === 'save' ? end.y : (engana ? 50 - (end.y - 50) * 0.9 : lerp(50, end.y, 0.5));
+                    info.gkDef.tx = 98.9; info.gkDef.ty = clamp(gyS, 45, 55);
+                }
                 phases.push({
                     players: snapshotTargets(players),
-                    ballPath: [spot, mid, end],
+                    ballPath: [spot, end],
                     ms: 700,
                     highlight: highlight,
                     pose: true
                 });
-                if (play.result === 'miss' && /poste|larguero/.test(String(play.text || '').toLowerCase())) {
+                if (play.result === 'miss' && (end.kind === 'bar' || end.frame)) {
                     phases[phases.length - 1].pose = false;
                     phases.push({
                         players: snapshotTargets(players),
@@ -2262,7 +2268,7 @@
             var next = nodes[i + 1];
             if (n.pt.kind) {
                 // Desenlace planificado (remate fuera, al palo, por encima, rechace...).
-                acts.push({ type: 'kick', pt: n.pt, shot: n.pt.kind === 'shot' || n.pt.kind === 'over', forceKind: n.pt.kind });
+                acts.push({ type: 'kick', pt: n.pt, shot: n.pt.kind === 'shot' || n.pt.kind === 'over' || n.pt.kind === 'bar', forceKind: n.pt.kind });
                 prevWho = null; prevPt = n.pt;
                 continue;
             }
@@ -2285,11 +2291,12 @@
         var tp = tempo();
         var from = { x: ball.x, y: ball.y };
         var dist = Math.max(0.5, mDist(from.x, from.y, to.x, to.y));
-        var base = BALL_SPEED[kind === 'over' ? 'shot' : kind] || 14;
+        var base = BALL_SPEED[kind === 'over' || kind === 'bar' ? 'shot' : kind] || 14;
         if (kind === 'lofted' || kind === 'ground' || kind === 'reset') base += Math.min(10, Math.max(0, dist - 20) * 0.2);   // los envíos largos van más fuertes
         var spd = Math.min(36, base * tp);   // tope: ni en «Turbo» el balón salta
         var dur = dist / spd + (kind === 'lofted' ? 0.25 / tp : 0);
-        if (kind === 'shot' || kind === 'over') dur = Math.max(dur, 0.32);   // un remate siempre se ve salir
+        if (kind === 'shot' || kind === 'over' || kind === 'bar') dur = Math.max(dur, 0.32);
+        var bounce = simFrameBounce && simClock - simFrameBounceT < 0.5; simFrameBounce = false;   // un remate siempre se ve salir
         var lo = ball.owner && playerState[ball.owner];
         if (simulating && window.__campoJerks !== false) {
             // Auditoría: el balón no sale ni cambia de rumbo sin que lo toque nadie.
@@ -2298,7 +2305,7 @@
             var ang = 0;
             if (fl0) { var ax = (fl0.to.x - fl0.from.x) * M_X, ay = (fl0.to.y - fl0.from.y) * M_Y, bx2 = (to.x - from.x) * M_X, by2 = (to.y - from.y) * M_Y; var la = Math.hypot(ax, ay) * Math.hypot(bx2, by2); ang = la > 0.01 ? Math.acos(clamp((ax * bx2 + ay * by2) / la, -1, 1)) * 180 / Math.PI : 0; }
             var inside = from.x > 0 && from.x < 100 && from.y > 0 && from.y < 100;
-            if (!nearL && inside && kind !== 'reset') simJerks.push({ s: simNs, kind: kind, why: fl0 ? 'enVuelo' : 'sinJugador', ang: Math.round(ang), fk: fl0 ? fl0.kind + ':' + (simClock - fl0.at).toFixed(1) + '/' + fl0.dur.toFixed(1) : undefined, at: window.__jerkStack ? String(new Error().stack).split('\n').slice(2, 4).map(function (l) { return l.replace(/.*campo\.js:/, ''); }).join(' < ') : undefined });
+            if (!nearL && inside && kind !== 'reset' && !bounce) simJerks.push({ s: simNs, kind: kind, why: fl0 ? 'enVuelo' : 'sinJugador', ang: Math.round(ang), fk: fl0 ? fl0.kind + ':' + (simClock - fl0.at).toFixed(1) + '/' + fl0.dur.toFixed(1) : undefined, at: window.__jerkStack ? String(new Error().stack).split('\n').slice(2, 4).map(function (l) { return l.replace(/.*campo\.js:/, ''); }).join(' < ') : undefined });
             else if (kind === 'reset' && fl0 && fl0.kind !== 'reset' && ang > 40 && inside) simJerks.push({ s: simNs, kind: kind, why: 'giroReset', ang: Math.round(ang) });
             else if (kind === 'reset' && inside && !nearL && dist > 8 && !(Math.abs(to.x - 50) < 1 && Math.abs(to.y - 50) < 1)) simJerks.push({ s: simNs, kind: kind, why: 'resetEnCampo', d: Math.round(dist), at: window.__jerkStack ? String(new Error().stack).split('\n').slice(2, 4).map(function (l) { return l.replace(/.*campo\.js:/, ''); }).join(' < ') : undefined });
         }
@@ -2310,7 +2317,8 @@
         ball.state = 'flight';
         ball.owner = null;
         ball.lock = false;
-        ball.fl = { at: simClock, from: from, to: { x: to.x, y: to.y }, t: 0, dur: dur, kind: kind, H: kind === 'lofted' ? clamp(dist / 30, 0.35, 1.1) : (kind === 'reset' ? 0.5 : (kind === 'over' ? 2.6 : 0)), receiver: receiver || null, uLine: uLine };
+        ball.fl = { at: simClock, from: from, to: { x: to.x, y: to.y }, t: 0, dur: dur, kind: kind, H: kind === 'lofted' ? clamp(dist / 30, 0.35, 1.1) : (kind === 'reset' ? 0.5 : (kind === 'over' ? 2.6 : (kind === 'bar' ? 2.0 : 0))), receiver: receiver || null, uLine: uLine,
+            h0: (to.head || (simulating && motor.phase && motor.phase.head && (kind === 'shot' || kind === 'bar') && !simRestart)) ? 1.25 : 0, frame: kind === 'bar' || !!to.frame };
     }
 
     function startAction(a) {
@@ -2409,7 +2417,8 @@
                 var wr = holderOf(a.to);
                 if (wr && (mDist(wr.x, wr.y, wr.tx, wr.ty) > 0.8 || motor.phaseT < 1.0)) return;
             }
-            if ((ready && motor.actionT > 0.12 / tp) || motor.actionT > 0.9 / tp) {
+            if (simFrameBounce && simClock - simFrameBounceT > 0.5) simFrameBounce = false;
+            if ((simFrameBounce && ball.state !== 'flight') || (ready && motor.actionT > 0.12 / tp) || motor.actionT > 0.9 / tp) {
                 var to = a.pt;
                 var recv = a.type === 'pass' ? holderOf(a.to) : null;
                 if (recv) to = { x: recv.tx, y: recv.ty };
@@ -2418,11 +2427,11 @@
                 // Balón parado dentro del campo tras un remate (parada, rechace): es un balón suelto más, alguien lo recoge.
                 if (simulating && ball.lock && !simRestart && !ball.goalNet && ball.state === 'free' && ball.x >= 0 && ball.x <= 100 && ball.y >= 0 && ball.y <= 100) ball.lock = false;
                 // Balón suelto sin nadie al lado: antes de enviarlo, alguien va a por él (nunca viaja solo).
-                if (simulating && !owner && ball.state === 'free' && !ball.lock) {
+                if (simulating && !owner && ball.state === 'free' && !ball.lock && !simFrameBounce) {
                     var nbP = nearestPlayerTo(ball.x, ball.y, 2.2, false);
                     if (nbP) { ball.state = 'held'; ball.owner = nbP; ball.lastSide = playerState[nbP].side; owner = playerState[nbP]; }
                 }
-                if (simulating && a.forceKind !== 'reset' && !ball.lock && !owner && ball.state === 'free' &&
+                if (simulating && a.forceKind !== 'reset' && !simFrameBounce && !ball.lock && !owner && ball.state === 'free' &&
                     ball.x > 0 && ball.x < 100 && ball.y > 0 && ball.y < 100 && (a.fetchT = (a.fetchT || 0) + dt) < 4) {
                     var fetch = a.fetcher && playerState[a.fetcher] ? a.fetcher : nearestOf(sideKeys(simAttackSide, true), ball.x, ball.y);
                     if (!a.fetcher && fetch && mDist(playerState[fetch].x, playerState[fetch].y, ball.x, ball.y) > 15) fetch = nearestOf(sideKeys('home', true).concat(sideKeys('away', true)), ball.x, ball.y) || fetch;
@@ -2490,10 +2499,13 @@
             ball.y = lerp(f.from.y, f.to.y, e);
             // Por encima del larguero: sube hasta pasada la portería y cae ya detrás de ella.
             if (f.kind === 'over' && f.uLine > 0 && f.uLine < 1) ball.h = f.H * (u < f.uLine ? Math.sin(Math.PI / 2 * u / f.uLine) : Math.cos(Math.PI / 2 * (u - f.uLine) / (1 - f.uLine)));   // lo más alto, justo sobre el larguero
+            else if (f.kind === 'bar') ball.h = f.H * Math.sin(Math.PI / 2 * u);   // sube hasta el larguero
             else ball.h = f.H ? Math.sin(Math.PI * u) * f.H : 0;
+            if (f.h0) ball.h += f.h0 * (1 - u);   // remate de cabeza: el balón sale desde arriba
             if (u >= 1) {
                 ball.state = 'free';
                 ball.h = 0;
+                if (f.frame && simulating) { simFrameBounce = true; simFrameBounceT = simClock; f.net = false; }
                 ball.lock = !!f.net || !!f.keep;
                 if (f.net && simulating && simGoalPlay && Math.abs(f.to.y - 50) < 6) ball.goalNet = true;
                 ball.fl = null;
@@ -3273,7 +3285,8 @@
     var simulating = false, simClock = 0, simSeed = 1;
     var tl = null;                        // línea temporal construida
     var pb = { seg: null, prog: 0, off: null, disp: null, lastS: -1, held: 0, sad: null, flags: null, period: 1 };
-    var BALL_CODE = { held: 0, free: 1, ground: 2, lofted: 3, shot: 4, reset: 5, over: 6 };
+    var BALL_CODE = { held: 0, free: 1, ground: 2, lofted: 3, shot: 4, reset: 5, over: 6, bar: 4 };
+    var simHeadPlay = false, simFrameBounce = false, simFrameBounceT = -9;   // el balón acaba de pegar en el palo o el larguero: el rechace sale sin que lo toque nadie
     var BALL_NAME = ['held', 'free', 'ground', 'lofted', 'shot', 'reset', 'over'];
     var ATTACK_KINDS = { shot: 1, save: 1, goal: 1, box: 1, oneonone: 1, counter: 1, wing: 1, play: 1 };
 
@@ -3373,14 +3386,13 @@
         var t = foldText(play.text);
         var k = play.kind;
         if (k === 'goal' || k === 'own-goal') return 'goal';
-        if (k === 'save') return /corner/.test(t) ? 'save-corner' : (/rechaz|suelta|despeja|repele/.test(t) ? 'save-parry' : 'save');
         var SHOTW = /remat|chut|dispar|volea|cabezazo|canonazo|zapatazo|tiro|busca puerta|prueba fortuna|define/;
         var lastChunk = (t.split(/\.\.\./).map(function (x) { return x.trim(); }).filter(Boolean).pop() || '');
         // Córner que nace de un remate desviado («... suelta un cañonazo ... E. Martinez desvía a córner»)
         if (k === 'corner') return (SHOTW.test(t) && /(desvia|saca|manda|despeja|toca|envia|mete la mano)[a-z ]* a corner|a corner$/.test(lastChunk) && !/banderin|lanza el corner|saca el corner|bota el corner/.test(t)) ? 'save-corner' : null;
-        if (k !== 'shot' && k !== 'oneonone' && k !== 'box') return null;
+        if (k !== 'shot' && k !== 'oneonone' && k !== 'box' && k !== 'save') return null;
         // Jugada en el área o mano a mano sin remate (le roban el balón, anticipa el control): no hay desenlace de tiro.
-        if (k !== 'shot' && !SHOTW.test(t)) return null;
+        if (k !== 'shot' && k !== 'save' && !SHOTW.test(t)) return null;
         function clean(x) {
             // «se repliega en bloque bajo» es una forma de defender, no un remate bloqueado
             x = x.replace(/\b(en|un|su|el) bloque( (bajo|alto|medio|compacto|defensivo))?/g, ' ');
@@ -3399,6 +3411,15 @@
             if (/alto|por encima|se eleva|arriba|nubes|grada/.test(x)) return 'over';
             if (/bloque|tapon|intercept|despeja la defensa|se estrella en|rebota en|corta el|desviado por/.test(x)) return 'block';
             return null;
+        }
+        var tailS = clean(t.split(/\.\.\./).map(function (x) { return x.trim(); }).filter(Boolean).slice(-2).join(' ... '));
+        var gkVerb = /(atrapa|bloca|ataja|retiene|detiene|para |despeja|desvia|rechaza|manopla|punos|dedos|saca|vuela|estirada|se queda con)/;
+        // El portero la desvía por encima del larguero (o la saca a córner por arriba).
+        if (gkVerb.test(tailS) && /(sobre|por encima de)l? ?(el )?(larguero|travesano)/.test(tailS)) return 'save-over';
+        if (k === 'save') {
+            var dS = decide(tailS);
+            if ((dS === 'over' || dS === 'post' || dS === 'wide') && !gkVerb.test(tailS)) return dS;
+            return /corner/.test(t) ? 'save-corner' : (/rechaz|suelta|despeja|repele/.test(t) ? 'save-parry' : 'save');
         }
         // «busca puerta ... H. Larsson lee la jugada y se lleva el balón»: le quitan el balón antes del remate (no hay tiro).
         if (!/remat|chut|dispar|volea|cabezazo|canonazo|zapatazo|empalma|golpea/.test(t) && /(se lleva el balon|le roba|roba el balon|anticipa|corta el avance|lee la jugada|se queda con el balon|intercepta)/.test(lastChunk)) return 'tackle';
@@ -3463,6 +3484,34 @@
         return o;
     }
 
+    // Particularidades del remate que cuenta la narración (plantillas de ESMS): desde fuera del área,
+    // de cabeza, al larguero o al palo.
+    function shotTraits(play) {
+        var t = foldText(play.text);
+        var parts = t.split(/\.\.\./).map(function (x) { return x.trim(); }).filter(Boolean);
+        var shotChunk = parts.filter(function (x) { return /remat|cabez|cabecea|peina|plancha|chut|dispar|volea|empalma|golpea|testarazo/.test(x); })[0] || '';
+        var tail = parts.slice(-2).join(' ... ').replace(/(primer|segundo) palo|palo (largo|corto)/g, ' ');
+        return {
+            far: /fuera del area|lejania|chut lejano|desde lejos|desde larga distancia|disparo lejano|medio campo|desde muy lejos|desde (unos |mas de )?(2|3)\d metros|zapatazo lejano/.test(t),
+            head: /cabezazo|cabecea|de cabeza|con la cabeza|mete la cabeza|peina|testarazo|en plancha/.test(shotChunk),
+            bar: /(larguero|travesano)/.test(tail) && !/(poste|palo)/.test(tail)
+        };
+    }
+    // Remate de lejos: el disparo sale de fuera del área (unos 22-27 m), sea cual sea el sitio planificado.
+    function farPoint(from, attack) {
+        var gx = attack === 'home' ? 100 : 0;
+        var dx = Math.abs(gx - from.x) * M_X, dy = (from.y - 50) * M_Y;
+        if (dx >= 18.5 || Math.abs(dy) >= 21) return null;
+        var ang = Math.atan2(dy, Math.max(4, dx)), d = 22 + rng() * 5;
+        return { x: gx - (gx === 100 ? 1 : -1) * Math.cos(ang) * d / M_X, y: clamp(50 + Math.sin(ang) * d / M_Y, 20, 80) };
+    }
+    function moveHolder(players, pt, np) {
+        var k = holderInSnapshot(players, pt, 4.5);
+        if (k) players[k] = { x: np.x - (np.x > 50 ? 0.6 : -0.6), y: np.y };
+        return k;
+    }
+    function gkKeyIn(players, side) { return Object.keys(players || {}).filter(function (k) { return k.split(':')[0] === side && isGkKey(k); })[0] || null; }
+
     function addOutcome(phases, play, attack) {
         var oc = shotOutcome(play);
         if (!oc || oc === 'goal' || !phases.length) return oc;
@@ -3471,14 +3520,27 @@
         var last = phases[phases.length - 1];
         var lp = last.ballPath || [];
         var from = lp[lp.length - 1] || { x: 50, y: 50 };
+        var tr = shotTraits(play);
+        if (tr.far && lp.length && !lp[lp.length - 1].kind && oc !== 'tackle') {
+            var fp = farPoint(from, attack);
+            if (fp) { moveHolder(last.players, from, fp); lp[lp.length - 1] = fp; from = fp; }
+        }
         var side = from.y < 50 ? -1 : 1;
         var snap = clonePlayers(last.players);
+        var defSideO = attack === 'home' ? 'away' : 'home';
+        var gkO = gkKeyIn(snap, defSideO);
         var path = null;
         if (oc === 'wide') path = [from, { x: gx + dir * 1.6, y: 50 + side * (5.6 + rng() * 3.5), kind: 'shot' }];
         else if (oc === 'over') path = [from, { x: gx + dir * 2.6, y: 50 + side * rng() * 2.5, kind: 'over' }];   // pasa por encima y cae detrás de la portería
-        else if (oc === 'post') {
-            var post = { x: gx - dir * 0.3, y: 50 + side * 3.6, kind: 'shot' };
-            path = [from, post, { x: gx - dir * 9, y: 50 + side * 14, kind: 'ground' }];
+        else if (oc === 'save-over') {
+            // El portero la toca por encima del larguero: vuela hacia ella y el balón se va arriba.
+            var so = { x: gx + dir * 2.6, y: 50 + side * (1 + rng() * 2.5), kind: 'over', touch: 'def' };
+            if (gkO) snap[gkO] = { x: gx - dir * 0.9, y: lerp(50, so.y, 0.8) };
+            path = [from, so];
+        } else if (oc === 'post') {
+            // Al palo (a la altura del poste) o al larguero (sube hasta el travesaño): el rechace vuelve al campo.
+            var post = tr.bar ? { x: gx - dir * 0.3, y: 50 + side * rng() * 3, kind: 'bar' } : { x: gx - dir * 0.3, y: 50 + side * 5.3, kind: 'shot', frame: true };
+            path = [from, post, { x: gx - dir * (7 + rng() * 5), y: clamp(post.y + side * (6 + rng() * 10), 12, 88), kind: 'ground' }];
         } else if (oc === 'block') {
             var defSide = attack === 'home' ? 'away' : 'home', best = null, bd = 1e9;
             Object.keys(snap).forEach(function (k) {
@@ -3503,14 +3565,21 @@
             Object.keys(snap).forEach(function (k) { if (k.split(':')[0] !== defS || /GK/.test(k)) return; var dd = mDist(snap[k].x, snap[k].y, from.x, from.y); if (dd < tbd) { tbd = dd; tb = k; } });
             if (tb) { var tp2 = { x: from.x - dir * 0.9, y: from.y + 0.6 }; snap[tb] = tp2; path = [from, { x: tp2.x, y: tp2.y }]; }
         } else if (oc === 'save' && ptAtt(from.x, attack) <= 88) {
-            // Parada lejos del área chica: el remate sale de verdad hacia el portero.
-            path = [from, { x: gx - dir * 1.2, y: 50 + side * 1.2, kind: 'shot' }];
+            // Parada lejos del área chica: el remate sale de verdad hacia el portero, que está donde llega.
+            var sv = { x: gx - dir * 1.2, y: 50 + side * 1.2, kind: 'shot' };
+            if (gkO) snap[gkO] = { x: sv.x - dir * 0.2, y: sv.y };
+            path = [from, sv];
         }
-        if (oc.indexOf('save') === 0 && lp.length && ptAtt(from.x, attack) > 88) {
-            // Parada: el remate sale de verdad hacia el portero (no es un pase al portero).
+        if (oc.indexOf('save') === 0 && oc !== 'save-over' && lp.length && ptAtt(from.x, attack) > 88) {
+            // Parada: el remate sale de verdad hacia el portero (no es un pase al portero), que sale a por él.
             if (lp.length === 1) lp.unshift({ x: from.x - dir * 9, y: lerp(from.y, 50, 0.3) });
-            lp[lp.length - 1] = { x: from.x, y: from.y, kind: 'shot' };
+            var dLine = clamp(Math.abs(gx - from.x) * M_X, 1.2, 5.5);
+            var sp = { x: gx - dir * dLine / M_X, y: lerp(from.y, 50, 0.55), kind: 'shot' };
+            lp[lp.length - 1] = sp;
+            var gkL = gkKeyIn(last.players, defSideO);
+            if (gkL) { last.players[gkL] = { x: sp.x, y: sp.y }; snap[gkL] = { x: sp.x, y: sp.y }; }
         }
+        if (tr.head) { if (path && path[1]) path[1].head = true; else if (lp.length && lp[lp.length - 1].kind === 'shot') lp[lp.length - 1].head = true; }
         if (path) phases.push({ players: snap, ballPath: path, ms: 650, highlight: last.highlight, ref: last.ref, outcome: oc });
         return oc;
     }
@@ -3530,6 +3599,13 @@
             var netPt = { x: intoRight ? 101.3 : -1.3, y: clamp(lastPt.y, 45.5, 54.5), kind: 'shot' };
             if (shotPh.ballPath.length === 1) shotPh.ballPath.unshift({ x: lerp(lastPt.x, 50, 0.12), y: lastPt.y });
             shotPh.ballPath[shotPh.ballPath.length - 1] = netPt;
+            var trG = shotTraits(play);
+            if (trG.head) netPt.head = true;
+            var oI = shotPh.ballPath.length - 2, oP = shotPh.ballPath[oI];
+            if (trG.far && oP && !oP.kind && !/penalti/.test(foldText(play.text))) {
+                var fpG = farPoint(oP, scorerSide);
+                if (fpG) { moveHolder(shotPh.players, oP, fpG); if (phases[ci - 2] && phases[ci - 2].players) moveHolder(phases[ci - 2].players, oP, fpG); shotPh.ballPath[oI] = fpG; }
+            }
             cel.ballPath = [];
         }
         // el goleador es el último nombrado del equipo que marca (si no, el más adelantado)
@@ -3620,6 +3696,7 @@
         var info = { attack: attack, fixed: 0, outcome: null };
         if (ATTACK_KINDS[play.kind]) info.fixed = fixProgress(phases, attack);
         info.outcome = addOutcome(phases, play, attack);
+        if (!/penalti/.test(foldText(play.text)) && shotTraits(play).head) phases.forEach(function (q) { if (q.pose == null) q.head = true; });
         if (play.kind === 'goal' || play.kind === 'own-goal') shapeGoal(phases, play, attack);
         phases = markSetPieces(phases, play, attack);
         addPlausibleOut(phases, play, attack);
@@ -3849,7 +3926,9 @@
             return { x: x, y: y };
         }
         function mv(k, x, y) { if (!playerState[k] || used[k]) return; used[k] = true; var ow = offWall(x, y); x = ow.x; y = ow.y;
-            for (var it2 = 0; it2 < 6 && r.shapeT.some(function (w) { return mDist(x, y, w.x, w.y) < 2.6; }); it2++) y = clamp(y + (y < 50 ? -1 : 1) * 2 / M_Y, 2, 98); setMoverTarget(playerState[k], x, y, 1.8, { involved: true }); r.shapeT.push({ k: k, x: x, y: y }); }
+            var bx0 = x, by0 = y, OFF = [[0, 0], [0, 2.8], [0, -2.8], [1.8, 0], [-1.8, 0], [0, 5.6], [0, -5.6], [2.2, 2.8], [2.2, -2.8], [-2.2, 2.8], [-2.2, -2.8], [0, 8.4], [0, -8.4]];
+            var freeAt = function (cx, cy) { return !r.shapeT.some(function (w) { return mDist(cx, cy, w.x, w.y) < 2.8; }) && !(r.wallT || []).some(function (w) { return mDist(cx, cy, w.x, w.y) < 4.6; }) && mDist(cx, cy, r.spot.x, r.spot.y) > 9.5; };
+            for (var oi = 0; oi < OFF.length; oi++) { var cx = clamp(bx0 + OFF[oi][0] / M_X, 1, 99), cy = clamp(by0 + OFF[oi][1] / M_Y, 2, 98); if (freeAt(cx, cy)) { x = cx; y = cy; break; } } setMoverTarget(playerState[k], x, y, 1.8, { involved: true }); r.shapeT.push({ k: k, x: x, y: y }); }
         if (r.type === 'goalkick') {
             var og = 100 - gx, odir = og === 100 ? 1 : -1;
             var edge = og - odir * 17.2 / M_X, halfBox = 21 / M_Y;
@@ -4133,6 +4212,15 @@
         if (r.kick && r.kick.net) ball.fl.net = true;
         ball.fl.born = r.born;   // lanzamiento de una reanudación (puede venir de la jugada anterior)
         if (r.kick && r.kick.kind === 'over') ball.fl.H = 2.6;
+        // Penalti: el portero se lanza (al balón si lo para; si no, a menudo al lado contrario).
+        if (r.type === 'penalty' && r.kick) {
+            var gkP = gkOf(oppOf(r.side)), gsP = gkP && playerState[gkP];
+            if (gsP) {
+                var pgxK = goalXOf(r.side), dy0 = r.kick.y - 50;
+                var gyP = r.kick.save ? r.kick.y : (Math.abs(dy0) > 1 && rng() < 0.6 ? 50 - dy0 * 0.9 : 50 + dy0 * 0.5);
+                gsP.tx = gsP.hx = pgxK === 100 ? 99.2 : 0.8; gsP.ty = gsP.hy = clamp(gyP, 44.5, 55.5); gsP.pend = null; gsP.spd = 7;
+            }
+        }
         // Hecha la reanudación, la fase acaba enseguida y el juego sigue (nadie se queda congelado).
         if (motor.phase === r.phase) { motor.actions = []; motor.action = null; if (motor.phase) motor.phaseDur = Math.min(motor.phaseDur, motor.phaseT + 0.8); }
     }
@@ -4333,10 +4421,15 @@
             var pgx = goalXOf(attack), pfd = pgx === 100 ? 1 : -1, pside = rng() < 0.5 ? -1 : 1;
             var pspot = { x: pgx - pfd * 11 / M_X, y: 50 };
             var pkick;
-            if (play.kind === 'goal') pkick = { x: pgx + pfd * 1.8, y: 50 + pside * (2.2 + rng() * 2), kind: 'shot', net: true };
-            else if (/(fuera|desviad|al palo|poste|larguero|por encima|alto|nubes|lo manda)/.test(t) && !/(detiene|ataja|para |bloca|despeja|con los pies|vuela)/.test(t))
-                pkick = /(larguero|por encima|alto|nubes)/.test(t) ? { x: pgx + pfd * 2.6, y: 50 + pside * 1.5, kind: 'over' } : { x: pgx + pfd * 2.2, y: 50 + pside * 6.2, kind: 'shot' };
-            else pkick = { x: pgx - pfd * 0.9, y: 50 + pside * 2.0, kind: 'shot' };
+            var tP = t.replace(/(primer|segundo) palo|palo (largo|corto)/g, ' ');
+            if (/panenka|por el centro|al centro/.test(tP)) pside = 0;
+            if (play.kind === 'goal') pkick = { x: pgx + pfd * 1.8, y: 50 + pside * (2.2 + rng() * 2.2), kind: 'shot', net: true };
+            else if (/(fuera|desviad|al palo|poste|larguero|travesano|por encima|alto|nubes|lo manda|grada)/.test(tP) && !/(detiene|ataja|para |bloca|despeja|con los pies|vuela|desvia el)/.test(tP)) {
+                if (/(larguero|travesano)/.test(tP) && !/por encima/.test(tP)) pkick = { x: pgx - pfd * 0.3, y: 50 + (pside || 1) * rng() * 2.5, kind: 'bar' };
+                else if (/(por encima|alto|nubes|grada)/.test(tP)) pkick = { x: pgx + pfd * 2.6, y: 50 + pside * 1.5, kind: 'over' };
+                else if (/(al palo|poste|el palo)/.test(tP)) pkick = { x: pgx + pfd * 1.4, y: 50 + (pside || 1) * 5.9, kind: 'shot' };   // pega en el palo y se va
+                else pkick = { x: pgx + pfd * 2.2, y: 50 + (pside || 1) * (7.5 + rng() * 2.5), kind: 'shot' };
+            } else pkick = { x: pgx - pfd * 0.6, y: 50 + (pside || 1) * (2.2 + rng() * 1.6), kind: 'shot', save: true };
             var penPh = { players: clonePlayers(first.players), ballPath: [{ x: pspot.x, y: pspot.y }], ms: 3000, highlight: first.highlight, ref: null,
                 setPiece: { type: 'penalty', side: attack, spot: pspot, kick: pkick, protest: opp, protestN: 3 } };
             var tail = [];
@@ -4610,7 +4703,7 @@
         // Guardar el estado vivo y simular en un mundo aparte.
         var saved = { playerState: playerState, ball: ball, refState: refState, motor: motor, ends: ends.flipped };
         simulating = true; simClock = 0; simSeed = 12345; simLeavers = {}; simScene = null; simFlipped = false;
-        simDbg = []; simJerks = []; simScoreSide = { home: 0, away: 0 }; simPlayMin = ''; tl0Got = -1; simRestart = null; simEvents = []; simNs = 0; simGoalPlay = false; simAttackSide = 'home'; simExiting = false; simInitAR();
+        simDbg = []; simJerks = []; simFrameBounce = false; simScoreSide = { home: 0, away: 0 }; simPlayMin = ''; tl0Got = -1; simRestart = null; simEvents = []; simNs = 0; simGoalPlay = false; simAttackSide = 'home'; simExiting = false; simInitAR();
         simStaff = [{ on: false, x: 0, y: 0, vx: 0, vy: 0, spd: 5 }, { on: false, x: 0, y: 0, vx: 0, vy: 0, spd: 5 }, { on: false, x: 0, y: 0, vx: 0, vy: 0, spd: 2 }];
         var ns = 0;
         try {
@@ -5222,11 +5315,13 @@
         // Ponerse al día acelerando con suavidad, nunca saltando (tope global ×4, como el tempo del motor).
         if (behind > 0) rate = Math.min(Math.max(4, rate), rate * (1 + Math.min(1.2, behind / 2.5)));
         var adv = running || seg.i === -2 || (clock.finished && tl.segs[seg.k + 1] && tl.segs[seg.k + 1].i === -2);
+        if (pb.replay) { adv = !pb.replay.done; lim = pb.replay.end; rate = NOMINAL_LINE * 1000 / 2000; if (!adv) rate = 0; }
         // La retirada final va a su ritmo (unos 20 s), sea cual sea la velocidad de la narración.
         if (clock.finished && (seg.i === -2 || pb.s >= seg.s1 - 1)) rate = Math.min(rate, 1.15);
         if (adv) pb.s += dt * rate / SAMPLE_DT;
         var heldT = 0;
         if (pb.s > lim) { heldT = (pb.s - lim) * SAMPLE_DT; pb.s = lim; }
+        if (pb.replay && !pb.replay.done && pb.s >= lim) { pb.replay.done = true; showBanner('Fin de la repetición'); }
         // Fundido en el cambio de campo: se oscurece, cada uno aparece en su mitad y vuelve la imagen.
         var swapNow = false;
         if (!pb.fadeSt && !pb.snap && pb.lastS >= 0) {
@@ -5262,6 +5357,7 @@
         var decay = Math.exp(-dt / (pb.fadeOff || 0.16));
         // Efectos: gol (red y aviso), cabizbajos.
         if (pb.lastS >= 0 && vseg.goalS != null && pb.lastS < vseg.goalS && s >= vseg.goalS && !pb.snap) goalFx(vseg);
+        if ((vseg.kind === 'yellow' || vseg.kind === 'red') && pb.cardK !== vseg.k && !pb.snap && pb.lastS >= 0) { var cS = cardRevealS(vseg); if (pb.lastS < cS && s >= cS) { pb.cardK = vseg.k; cardFx(vseg); } }
         var sad = vseg.goalS != null && s >= vseg.goalS && s < (vseg.sadEnd || vseg.s1) ? (vseg.scorerSide === 'home' ? 'away' : 'home') : null;
         if (sad !== pb.sad) {
             playersLayer.classList.toggle('campo-sad-home', sad === 'home');
@@ -5394,6 +5490,33 @@
         setTimeout(function () { if (g.parentNode) g.parentNode.removeChild(g); }, 2900);
     }
 
+    // Cartel de tarjeta (como el de «¡GOL!»): amarilla o roja y el jugador.
+    function cardFx(seg) {
+        var d = data(); var top = root && root.querySelector('svg');
+        if (!top || !d) return;
+        var pl = buildPlays(d)[seg.i]; if (!pl) return;
+        var t = foldText(pl.text), red = seg.kind === 'red' || /segunda amarilla|doble amarilla|tarjeta roja|expulsa/.test(t);
+        var chunk = String(pl.text).split(/\.\.\.|\n/).filter(function (c) { return /tarjeta|amonesta|expuls/i.test(c); })[0] || '';
+        var who = (pl.players || []).filter(function (n) { return chunk.indexOf(String(n).split(' ').pop()) >= 0; })[0] || (pl.players || [])[0] || '';
+        var old = top.querySelector('.campo-card-banner'); if (old) old.remove();
+        var p = toSvg(50, 13);
+        var g = svgEl('g', { 'class': 'campo-card-banner campo-goal-banner', transform: 'translate(' + p.x + ',' + p.y + ')' });
+        g.appendChild(svgEl('rect', { x: -190, y: -50, width: 380, height: 92, rx: 16, fill: 'rgba(8,14,10,0.88)', stroke: red ? '#dc2626' : '#facc15', 'stroke-width': 4 }));
+        g.appendChild(svgEl('rect', { x: -168, y: -36, width: 40, height: 58, rx: 5, fill: red ? '#dc2626' : '#facc15', stroke: '#fff', 'stroke-width': 1.5, transform: 'rotate(-8 -148 -7)' }));
+        var t1 = svgEl('text', { x: 18, y: -8, 'text-anchor': 'middle', fill: '#fff', 'font-size': 30, 'font-weight': 900, 'font-family': 'Segoe UI, sans-serif', 'letter-spacing': 1 });
+        t1.textContent = red ? (/segunda amarilla|doble amarilla/.test(t) ? '¡ROJA! (2.ª amarilla)' : '¡TARJETA ROJA!') : 'TARJETA AMARILLA';
+        var t2 = svgEl('text', { x: 18, y: 26, 'text-anchor': 'middle', fill: red ? '#fecaca' : '#fde68a', 'font-size': 20, 'font-weight': 700, 'font-family': 'Segoe UI, sans-serif' });
+        t2.textContent = who ? shortName(who, d.formatName, false) : '';
+        g.appendChild(t1); g.appendChild(t2);
+        top.appendChild(g);
+        setTimeout(function () { if (g.parentNode) g.parentNode.removeChild(g); }, 2900);
+    }
+    function cardRevealS(seg) {
+        var rv = segReveal(seg), k = 0;
+        for (var j = 0; j < rv.lines.length; j++) if (/tarjeta|amonesta|expuls/i.test(rv.lines[j])) { k = j; break; }
+        return rv.s[k] != null ? rv.s[k] + 2 : seg.s0;
+    }
+
     /* ---------------- UI ---------------- */
 
     function ensureUI() {
@@ -5408,6 +5531,7 @@
                 '<div class="campo-team home"><span class="campo-swatch" id="campo-home-swatch"></span><span id="campo-home-name">Local</span></div>' +
                 '<div class="campo-score-block">' +
                     '<div class="campo-score" id="campo-score">0 - 0</div>' +
+                    '<div class="campo-min" id="campo-min">Minuto 0</div>' +
                     '<div class="campo-pens" id="campo-pens" hidden></div>' +
                 '</div>' +
                 '<div class="campo-team away"><span id="campo-away-name">Visitante</span><span class="campo-swatch" id="campo-away-swatch"></span></div>' +
@@ -5418,9 +5542,8 @@
             '</div>' +
             '<div class="campo-caption" id="campo-caption">Pega un informe y pulsa «Comenzar partido» para ver el movimiento.</div>' +
             '<div class="campo-controls">' +
-                '<button type="button" id="campo-play">Comenzar</button>' +
-                '<span class="campo-min" id="campo-min">Minuto 0</span>' +
                 '<button type="button" id="campo-fs" class="campo-fs-btn" title="Ver el campo a pantalla completa (en el móvil, gíralo en horizontal)">Ampliar</button>' +
+                '<button type="button" id="campo-play">Comenzar</button>' +
                 '<input type="range" class="campo-slider" id="campo-slider" min="0" max="90" value="0" step="1" aria-label="Jugada">' +
             '</div>' +
             '<p class="campo-note"><b>Fase Beta:</b> esta forma de ver los partidos está en desarrollo y no es definitiva. Los movimientos son aproximados (el informe no trae coordenadas): los jugadores se mueven según lo que cuenta la narración y el resto se rellena con jugadas verosímiles.</p>';
@@ -5587,7 +5710,7 @@
     }
 
     function onSliderInput() {
-        dragging = true;
+        dragging = true; pb.replay = null;
         var d = data();
         if (!d) return;
         if (d.started && !d.paused && !d.finished && typeof window.togglePause === 'function' && !sliderPausedByUs) {
@@ -6061,6 +6184,10 @@
         if (d.seeking) return;
         keepViewOnReset = false;
         var play = currentPlay(d);
+        if (pb.replay) {
+            if (d.started && !d.paused && !d.finished) { pb.replay = null; lastPlayIndex = -1; }   // al reanudar, vuelve a donde iba la narración
+            else return;
+        }
         if (useTimeline(d, matchId)) {
             updateChrome(d, play);
             setCaption(play, d);
@@ -6128,6 +6255,7 @@
     }
 
     function resetView() {
+        pb.replay = null;
         if (keepViewOnReset) {
             // Reinicio provocado por el deslizador (salto a una jugada): el campo ya muestra esa jugada,
             // así que se conserva todo para que no parpadee ni salte al terminar el avance rápido.
@@ -6223,6 +6351,19 @@
         if (!hit) return false;
         ensureUI();
         refresh();
+        // Repetición: solo la jugada anterior y el gol; la narración se queda donde estaba.
+        if (tl && tl.segByPlay && tl.segByPlay[hit.i]) {
+            var gSeg = tl.segByPlay[hit.i], pSeg = hit.i > 0 ? tl.segByPlay[hit.i - 1] : null;
+            if (d.started && !d.paused && !d.finished && typeof window.togglePause === 'function') window.togglePause();
+            var startS = pSeg && !pSeg.jumpFlip && !gSeg.jumpFlip ? pSeg.s0 : gSeg.s0;
+            pb.seg = gSeg; pb.s = startS; pb.lastS = startS; pb.off.fill(0); pb.boff = [0, 0]; pb.snap = true; pb.hidden = {};
+            pb.replay = { end: segLimit(gSeg), done: false };
+            lastPlayIndex = gSeg.i;
+            showBanner('Repetición');
+            if (ui.min) ui.min.textContent = 'Repetición · ' + hit.minute + "'";
+            if (ui.caption) ui.caption.innerHTML = '<span class="campo-kind goal">Repetición</span> ' + escapeHtml(summarize(hit.text));
+            return true;
+        }
         if (hit.i === 0) {
             if (typeof window.resetSimulation === 'function') window.resetSimulation();
             if (typeof window.startSimulation === 'function') window.startSimulation();

@@ -4,3 +4,7 @@ Página de prueba de la rama `vista-campo` de [commentarydisplay](https://github
 No es la versión oficial, que sigue en https://alantsm.github.io/commentarydisplay/.
 
 Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña «Vista 2D».
+
+### S24–S25
+- Minuto bajo el marcador, «Ampliar» antes de «Reanudar», repetición solo de la jugada del gol, banner de tarjetas.
+- Mayor fidelidad narración–coreografía: palo/larguero, paradas, cabezazos, tiros lejanos, penaltis y tandas con desenlace visible.
