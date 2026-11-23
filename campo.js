@@ -3830,7 +3830,7 @@
             var wx = r.spot.x + gdx / gl * 9.15 / M_X, wy = r.spot.y + gdy / gl * 9.15 / M_Y;
             var px = -gdy / gl, py = gdx / gl;
             // Barrera de 3 o 4 (más cerca, más jugadores), hombro con hombro tal y como se dibujan: sin montarse unos encima de otros.
-            var wN = gl < 24 ? 4 : 3, wGap = 3.8 * sepFactor();
+            var wN = gl < 24 ? 4 : 3, wGap = 4.4 * sepFactor();
             var defs = sideKeys(opp, true).sort(byDistTo(wx, wy)).slice(0, wN);
             r.wallT = [];
             defs.forEach(function (k, i) {
@@ -4758,6 +4758,30 @@
             // Antes del descanso o del final: la falta narrada pendiente se lanza (no se queda sin sacar).
             var koOwed = null;
             function isKoPhase(q) { var bp = q.ballPath || []; return q.kickoff || q.kickPass || (q.pose === false && bp.length === 1 && Math.abs(bp[0].x - 50) < 0.5 && Math.abs(bp[0].y - 50) < 0.5); }
+            // Descanso: jugadores y árbitro se van hacia el túnel (descanso y final de los 90' con prórroga) o, en el
+            // descanso de la prórroga, cada uno hacia su entrenador en la banda. Luego el fundido y la segunda parte.
+            var brkRef = null;
+            function breakWalk(toBench) {
+                if (simRestart && !simRestart.auto) return;
+                var lastB = segs[segs.length - 1];
+                motor.phases = []; motor.phase = null; motor.actions = []; motor.action = null; motor.waitRestart = false;
+                simRestart = null;
+                ball.state = 'free'; ball.fl = null; ball.h = 0; ball.owner = null; ball.lock = true; ball.goalNet = false;
+                ball.x = clamp(ball.x, 1, 99); ball.y = clamp(ball.y, 1, 99);
+                Object.keys(playerState).forEach(function (k) {
+                    var st = playerState[k];
+                    if (st.leaving || st.down) return;
+                    var v = toBench ? { x: BENCH[st.side].x + (rng() - 0.5) * 12, y: 97.2 + rng() * 2.2 } : { x: 46 + rng() * 8, y: 101 + rng() * 1.6 };
+                    var lg = simLogOfVis(v.x, v.y);
+                    st.pend = null; st.hold = false; st.tx = lg.x; st.ty = lg.y; st.hx = lg.x; st.hy = lg.y;
+                    st.spd = (toBench ? 3 : 4.2) + rng() * 0.8;
+                });
+                brkRef = { x: refState.x, y: refState.y };
+                var rv = toBench ? simLogOfVis(50, 96) : simLogOfVis(50.5, 101.5);
+                refState.tx = rv.x; refState.ty = rv.y; refState.spd = 3.4;
+                advance(toBench ? 6 : 9, { frozen: true });
+                if (lastB && lastB.i >= 0) { lastB.s1 = ns; lastB.brk = toBench ? 'bench' : 'tunnel'; }
+            }
             function finishPending() {
                 // Gol justo antes del descanso o del final: el saque de centro se hace igualmente antes del pitido.
                 var pendK = (motor.phase ? [motor.phase] : []).concat(motor.phases || []);
@@ -4790,7 +4814,7 @@
             plays.forEach(function (play, i) {
                 var h = lh.hist[i];
                 var p = play.minute === 'tanda' || play.kind === 'shootout' || play.kind === 'shootout-kick' ? period : periodOf(play);
-                if ((p % 2 === 0) !== simFlipped) finishPending();
+                if ((p % 2 === 0) !== simFlipped) { finishPending(); breakWalk(period === 3); }
                 // Lo narrado en la jugada anterior (falta, córner, remate tras la falta...) termina dentro de su
                 // propio tramo: así la narración nunca cuenta algo que el campo aún no ha enseñado.
                 else if (play.kind !== 'sub') {
@@ -4809,6 +4833,7 @@
                 // Descanso (fundido): la segunda parte arranca con el balón ya en el centro.
                 if (seg.jumpFlip && play.kickoffBefore) {
                     if (simRestart) { simRestart = null; }
+                    if (brkRef) { refState.x = refState.tx = brkRef.x; refState.y = refState.ty = brkRef.y; refState.vx = refState.vy = 0; brkRef = null; }
                     ball.x = 50; ball.y = 50; ball.h = 0; ball.state = 'free'; ball.owner = null; ball.fl = null; ball.lock = false; ball.goalNet = false;
                 }
                 period = p;
