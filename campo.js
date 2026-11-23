@@ -3397,9 +3397,10 @@
         }
         if (k !== 'shot' && k !== 'oneonone' && k !== 'box' && k !== 'save') {
             // Jugada o contra que acaba en remate al palo, por encima o atrapado: también se representa el tiro.
-            if (!/^(play|counter|wing)$/.test(k) || !/(remat|chut|dispar|volea|empalma|cabecea|cabezazo|prueba con un tiro|tiro (colocado|cruzado|seco|lejano))/.test(t)) return null;
+            if (!/^(play|counter|wing)$/.test(k) || !/(remat|chut|dispar|volea|empalma|cabecea|cabezazo|de cabeza|en plancha|prueba con un tiro|tiro (colocado|cruzado|seco|lejano))/.test(t)) return null;
             var dk = decide(clean(lastChunk));
-            return dk === 'post' || dk === 'over' || dk === 'save' ? dk : null;
+            if (!dk && /(se marcha|se va|sale) (fuera|por la linea de fondo)|linea de fondo/.test(lastChunk) && /cabece|de cabeza|en plancha|remat|chut|dispar|volea|empalma/.test(t)) dk = 'wide';
+            return dk === 'post' || dk === 'over' || dk === 'save' || dk === 'wide' ? dk : null;
         }
         // Jugada en el área o mano a mano sin remate (le roban el balón, anticipa el control): no hay desenlace de tiro.
         if (k !== 'shot' && k !== 'save' && !SHOTW.test(t)) return null;
