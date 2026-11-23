@@ -8,3 +8,8 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 ### S24–S25
 - Minuto bajo el marcador, «Ampliar» antes de «Reanudar», repetición solo de la jugada del gol, banner de tarjetas.
 - Mayor fidelidad narración–coreografía: palo/larguero, paradas, cabezazos, tiros lejanos, penaltis y tandas con desenlace visible.
+
+### S26
+- Descansos: retirada al túnel (descanso y final de los 90' con prórroga) o hacia el entrenador (descanso de la prórroga).
+- Minutos sin ocasiones con dominio del centro del campo y robos creíbles.
+- Paradas sobre la línea, remates al palo en jugadas y contras, penalti al palo con rebote.
