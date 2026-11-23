@@ -3683,6 +3683,50 @@
         }
     }
 
+    // Minutos sin ocasiones (relleno): dominio del centro del campo. Pases cortos, horizontales o atrás, por dentro;
+    // a veces el rival lee el pase y roba (se anticipa al receptor en la línea del pase).
+    function fillerMidfield(phases, attack) {
+        var q = null;
+        phases.forEach(function (ph) { if (ph.pose == null && ph.players && !ph.setPiece) q = ph; });
+        if (!q || !q.ballPath || !q.ballPath.length) return;
+        var P = q.players, keys = Object.keys(P);
+        var isGK = function (k) { var st = playerState[k]; return st ? st.pos === 'GK' : false; };
+        var b0 = q.ballPath[0], dAx = 46 + rng() * 8 - ptAtt(b0.x, attack);
+        var orig = {}; keys.forEach(function (k) { orig[k] = { x: P[k].x, y: P[k].y }; });
+        var undo = function () { keys.forEach(function (k) { P[k].x = orig[k].x; P[k].y = orig[k].y; }); };
+        var bAx = ptAtt(b0.x, attack) + dAx;
+        keys.forEach(function (k) { if (isGK(k)) return; var ax = ptAtt(P[k].x, attack) + dAx; ax = bAx + (ax - bAx) * 0.62; P[k].x = fromAtt(clamp(ax, 14, 76), attack); });
+        var mine = keys.filter(function (k) { return k.indexOf(attack + ':') === 0 && !isGK(k); });
+        var opp = keys.filter(function (k) { return k.indexOf(attack + ':') !== 0 && !isGK(k); });
+        if (mine.length < 4) { undo(); return; }
+        var cur = mine.slice().sort(function (a, b) { return mDist(P[a].x, P[a].y, fromAtt(48, attack), 50) - mDist(P[b].x, P[b].y, fromAtt(48, attack), 50); })[0];
+        var path = [{ x: P[cur].x, y: P[cur].y }], used = {}; used[cur] = true;
+        var nP = 3 + Math.floor(rng() * 3);
+        var wentBack = false;
+        for (var i = 0; i < nP; i++) {
+            var c = P[cur], cax = ptAtt(c.x, attack);
+            var fwd = wentBack ? 12 : 4;
+            var cand = mine.filter(function (k) { if (used[k]) return false; var t = P[k], d = mDist(c.x, c.y, t.x, t.y); var tax = ptAtt(t.x, attack); return d > 6 && d < 24 && tax < cax + fwd && tax > Math.max(28, cax - 14) && t.y > 18 && t.y < 82; });
+            if (!cand.length) break;
+            cand.sort(function (a, b) { return Math.abs(P[a].y - 50) - Math.abs(P[b].y - 50) + (rng() - 0.5) * 30; });
+            wentBack = ptAtt(P[cand[0]].x, attack) < cax - 2;
+            cur = cand[0]; used[cur] = true; path.push({ x: P[cur].x, y: P[cur].y });
+        }
+        if (path.length < 3) { undo(); return; }
+        // Robo creíble: el defensor más cercano a la línea del último pase se anticipa al receptor.
+        if (rng() < 0.4 && opp.length) {
+            var a = path[path.length - 2], b = path[path.length - 1];
+            var ip = { x: a.x + (b.x - a.x) * 0.72, y: a.y + (b.y - a.y) * 0.72 };
+            var thief = opp.slice().sort(function (u, v) { return mDist(P[u].x, P[u].y, ip.x, ip.y) - mDist(P[v].x, P[v].y, ip.x, ip.y); })[0];
+            if (mDist(P[thief].x, P[thief].y, ip.x, ip.y) < 14) {
+                P[thief].x = ip.x; P[thief].y = ip.y;
+                path[path.length - 1] = { x: ip.x, y: ip.y };
+                q.fillSteal = thief;
+            }
+        }
+        q.ballPath = path; q.ms = Math.max(q.ms || 800, 900); q.fill = true;
+    }
+
     function planPlay(play, dP) {
         var res = resolvePlay(play, dP);
         var phases = (res.phases || []).map(function (ph) {
@@ -3695,6 +3739,7 @@
         var attack = sideOfTeam(play.team, dP) || 'home';
         var info = { attack: attack, fixed: 0, outcome: null };
         if (ATTACK_KINDS[play.kind]) info.fixed = fixProgress(phases, attack);
+        if (play.filler) fillerMidfield(phases, attack);
         info.outcome = addOutcome(phases, play, attack);
         if (!/penalti/.test(foldText(play.text)) && shotTraits(play).head) phases.forEach(function (q) { if (q.pose == null) q.head = true; });
         if (play.kind === 'goal' || play.kind === 'own-goal') shapeGoal(phases, play, attack);
@@ -3707,6 +3752,7 @@
 
     /* ---------------- Sesiones 15-17: reanudaciones (banda, puerta, córner, centro), faltas con y sin
        barrera, fueras de juego, linieres y protestas. Todo ocurre dentro de la simulación del coreógrafo. ---- */
+    var simFillPlay = false;
     var simDbg = [], simSegT = 99, tlData = null, simNextKind = null, simNextText = '', simNextSide = null;
     var FK_GOAL_RE = /(falta a cargo|lanza la falta|lanzamiento de falta|la falta se cuela|golpeo de falta|libre directo|tiro libre|ejecuta la falta|falta directa|saca la falta|clava la falta|de falta)/;
     var simJerks = [];
@@ -4597,6 +4643,7 @@
         if (now < (o.searchAt || 0)) return;
         if (ax < 78) {
             // Sin jugada narrada: conduce hacia delante con calma (no se queda plantado con el balón).
+            if (simFillPlay) { o.tx = fromAtt(clamp(ax + (rng() - 0.55) * 5, 30, 60), att); o.ty = clamp(o.y + (rng() - 0.5) * 10, 20, 80); o.spd = 1.6 + rng(); o.searchAt = now + 1300 + rng() * 700; return; }
             o.tx = fromAtt(Math.min(78, ax + 5 + rng() * 5), att); o.ty = clamp(o.y + (rng() - 0.5) * 8, 10, 90);
             o.spd = 2 + rng(); o.searchAt = now + 1100 + rng() * 600;
             return;
@@ -4827,6 +4874,7 @@
                     }
                 }
                 simPlayMin = String(play.minute || '');
+                simFillPlay = !!play.filler;
                 var seg = { i: i, s0: ns, kind: play.kind, period: p, cut: false };
                 // Cambio de campo: cada uno aparece ya en su mitad (la reproducción lo funde a negro y vuelve).
                 if ((p % 2 === 0) !== simFlipped) { simFlipped = !simFlipped; seg.flip = true; seg.jumpFlip = true; }
