@@ -3988,7 +3988,7 @@
             var edge = og - odir * 17.2 / M_X, halfBox = 21 / M_Y;
             var inBox = function (k) { var st = playerState[k], tx = st.tx != null ? st.tx : st.x, ty = st.ty != null ? st.ty : st.y; return (tx - edge) * odir > -0.6 && Math.abs(ty - 50) < halfBox; };
             var mine = sideKeys(r.side, true).filter(function (k) { return k !== r.taker && inBox(k); }).sort(byDistTo(r.spot.x, r.spot.y));
-            mine.slice(2).forEach(function (k, i) { mv(k, edge - odir * (3 + rng() * 6) / M_X, clamp(playerState[k].y, 14, 86)); });
+            mine.slice(1).forEach(function (k, i) { mv(k, edge - odir * (3 + rng() * 6) / M_X, clamp(playerState[k].y, 14, 86)); });
             sideKeys(opp, true).filter(inBox).forEach(function (k) { mv(k, edge - odir * (1.5 + rng() * 4) / M_X, clamp(playerState[k].y, 18, 82)); });
             return;
         }
