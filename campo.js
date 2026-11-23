@@ -3593,6 +3593,12 @@
         } else if (oc === 'save' && ptAtt(from.x, attack) <= 88) {
             // Parada lejos del área chica: el remate sale de verdad hacia el portero, que está donde llega.
             var sv = { x: gx - dir * 1.2, y: 50 + side * 1.2, kind: 'shot' };
+            // El portero adelantado para el tiro donde está (no le pasa el balón por al lado para pararlo luego en la línea).
+            var gkSt = gkO && playerState[gkO];
+            if (gkSt && !/bajo (los )?palos|sobre la (misma )?linea|linea de (gol|meta)/.test(foldText(play.text || ''))) {
+                var gkd = clamp(Math.abs(gkSt.x - gx) * M_X, 1.2, 10);
+                sv = { x: gx - dir * gkd / M_X, y: lerp(from.y, 50, 0.6), kind: 'shot' };
+            }
             if (gkO) snap[gkO] = { x: sv.x - dir * 0.2, y: sv.y };
             path = [from, sv];
         }
