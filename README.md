@@ -24,3 +24,6 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 - Minutos sin ocasiones (con «Omitir minutos sin ocasiones» desmarcado): recuadro neutro con «Balón en disputa» / «Sin ocasiones».
 - Gol: primero solo «¡¡¡GOOOOOOL!!!» parpadeando (estilo CM 01/02) con el color del equipo que marca (también en propia puerta); el resto de la frase en el siguiente comentario.
 - Color por acción: cada frase lleva el color del equipo del jugador que hace la acción (despejes, cortes, paradas, robos y faltas del rival con su color); «La defensa despeja», «el portero corta de puños»… también con el color del rival.
+
+### S30
+- Sesión de ajustes internos (saques de banda y barrera) sin cambios publicados: los intentos no mejoraban el auditor y se revirtieron.
