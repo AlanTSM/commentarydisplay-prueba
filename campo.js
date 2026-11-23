@@ -3386,7 +3386,7 @@
         var t = foldText(play.text);
         var k = play.kind;
         if (k === 'goal' || k === 'own-goal') return 'goal';
-        var SHOTW = /remat|chut|dispar|volea|cabezazo|canonazo|zapatazo|tiro|busca puerta|prueba fortuna|define/;
+        var SHOTW = /remat|chut|dispar|volea|cabezazo|cabecea|de cabeza|empalma|canonazo|zapatazo|tiro|busca puerta|prueba fortuna|define/;
         var lastChunk = (t.split(/\.\.\./).map(function (x) { return x.trim(); }).filter(Boolean).pop() || '');
         // Córner que nace de un remate desviado («... suelta un cañonazo ... E. Martinez desvía a córner»)
         if (k === 'corner') return (SHOTW.test(t) && /(desvia|saca|manda|despeja|toca|envia|mete la mano)[a-z ]* a corner|a corner$/.test(lastChunk) && !/banderin|lanza el corner|saca el corner|bota el corner/.test(t)) ? 'save-corner' : null;
@@ -3432,7 +3432,7 @@
         var parts = t.split(/\.\.\./).map(function (x) { return x.trim(); }).filter(Boolean);
         var r = decide(clean(parts.slice(-2).join(' ... '))) || decide(clean(t));
         if (r) return r;
-        if (k === 'shot' || /fuera|desviad|rozando|lejos|remat|chut|dispar/.test(t)) return 'wide';
+        if (k === 'shot' || /fuera|desviad|desvia a la nada|rozando|lejos|remat|chut|dispar|de cabeza|cabecea/.test(t)) return 'wide';
         return null;
     }
 
@@ -4820,6 +4820,10 @@
             function breakWalk(toBench) {
                 if (simRestart && !simRestart.auto) return;
                 var lastB = segs[segs.length - 1];
+                // Lo que quedaba de la última jugada (el remate, el despeje...) se termina antes de irse.
+                var tW = simClock + 10;
+                while (!simRestart && (motor.phase || (motor.phases && motor.phases.length) || motor.action || (motor.actions && motor.actions.length) || ball.state === 'flight') && simClock < tW) advance(0.2, { attack: simAttackSide, frozen: false, search: false });
+                if (simRestart && !simRestart.auto) return;
                 motor.phases = []; motor.phase = null; motor.actions = []; motor.action = null; motor.waitRestart = false;
                 simRestart = null;
                 ball.state = 'free'; ball.fl = null; ball.h = 0; ball.owner = null; ball.lock = true; ball.goalNet = false;
