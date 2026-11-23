@@ -13,3 +13,6 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 - Descansos: retirada al túnel (descanso y final de los 90' con prórroga) o hacia el entrenador (descanso de la prórroga).
 - Minutos sin ocasiones con dominio del centro del campo y robos creíbles.
 - Paradas sobre la línea, remates al palo en jugadas y contras, penalti al palo con rebote.
+
+### S27
+- Cabezazos y desvíos representados en su jugada, córners con remate, barrera sin jugadores pegados, saque de puerta con el área despejada, balón siempre tocado antes de salir, cambios con el balón parado.
