@@ -16,3 +16,11 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 
 ### S27
 - Cabezazos y desvíos representados en su jugada, córners con remate, barrera sin jugadores pegados, saque de puerta con el área despejada, balón siempre tocado antes de salir, cambios con el balón parado.
+
+### S28–S29
+- Córners con el área llena (solo uno se queda atrás vigilando la contra).
+- Informes t514: árbitro «Árbitro: Nombre (país)», «Jugadas de ataque» (antes «Ocasiones de gol»), «Estadio» y pie con «.HB»; siguen valiendo los informes antiguos.
+- Hora por defecto 20:30; desde las 20:00 el tiempo «Soleado» se muestra como «🌙 Despejado».
+- Minutos sin ocasiones (con «Omitir minutos sin ocasiones» desmarcado): recuadro neutro con «Balón en disputa» / «Sin ocasiones».
+- Gol: primero solo «¡¡¡GOOOOOOL!!!» parpadeando (estilo CM 01/02) con el color del equipo que marca (también en propia puerta); el resto de la frase en el siguiente comentario.
+- Color por acción: cada frase lleva el color del equipo del jugador que hace la acción (despejes, cortes, paradas, robos y faltas del rival con su color); «La defensa despeja», «el portero corta de puños»… también con el color del rival.

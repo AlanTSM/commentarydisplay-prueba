@@ -765,6 +765,18 @@
             padding: 20px;
             box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.3);
         }
+        /* S29: el recuadro del gol parpadea como en Championship Manager 01/02 (colores del equipo que marca) */
+        #narration.goal-event {
+            animation: cmGoalBlink 0.9s steps(1, end) infinite;
+        }
+        @keyframes cmGoalBlink {
+            0% { background: var(--gbg, #4a4a4a); color: var(--gfg, #FFD700); }
+            50% { background: var(--gfg, #FFD700); color: var(--gbg, #4a4a4a); }
+        }
+        #narration.filler-minute {
+            font-style: italic;
+            opacity: 0.85;
+        }
         #possession-bar-container {
             margin-top: 15px;
         }
@@ -3176,7 +3188,7 @@
         <!-- Nueva sección Hora del partido -->
         <label>Hora del partido</label>
         <div class="match-time-row">
-            <input type="time" id="matchTimeInput" value="16:00">
+            <input type="time" id="matchTimeInput" value="20:30">
         </div>
 
         <button onclick="applySettings()">Aplicar</button>
@@ -3223,6 +3235,7 @@
         let campoSeekUntilLine = null;
         let campoPlaysStarted = 0;
         let lineGateSince = 0;
+        let pendingGoalRest = null;   // S29: tras «¡¡¡GOOOOOOL!!!» solo, el resto de la frase va en el siguiente comentario
         let rawInput = '';
         let showAlternateColorsField = true;
         let currentTheme = 'actual';
@@ -3301,7 +3314,7 @@
         let rewindStack = [];
 
         // Match time
-        let matchTime = "16:00";
+        let matchTime = "20:30";
 
         // ===== Compatibilidad con los informes de esms_real (además de esms_plus) =====
         // Diferencias principales de esms_real: minutos "45+3", nombres con espacios y puntos
@@ -3936,7 +3949,9 @@
 
                 const match = line.match(/([^:]+):\s*(\d+)\s*\|\s*(\d+)/);
                 if (match) {
-                    const statName = match[1].trim();
+                    let statName = match[1].trim();
+                    // t514: «Ocasiones de gol» pasa a llamarse «Jugadas de ataque» (los informes viejos se muestran con el nombre nuevo).
+                    if (/^ocasiones de gol$/i.test(statName)) statName = 'Jugadas de ataque';
                     const homeValue = match[2];
                     const awayValue = match[3];
 
@@ -5598,6 +5613,56 @@
             return teamKey || null;
         }
 
+        // S29: color por acción. Manda el equipo del primer jugador nombrado en la frase (quien hace la acción:
+        // «Cuti Romero llega al corte», «Paradón de Neuer», «Falta de X sobre Y»...). Sin nombres, las acciones
+        // defensivas genéricas («La defensa despeja», «el portero corta de puños»...) van con el color del rival.
+        const DEF_NONAME_RE = /^(?:la defensa|la zaga|la retaguardia|un defensa|un defensor|un central|el portero|el guardameta|el meta|el arquero)\b|\b(?:el portero|el guardameta|el meta|el arquero)\s+(?:corta|atrapa|bloca|ataja|despeja|detiene|se queda|sale|vuela|desvia|rechaza|blocca)|\b(?:despeje|corte|rechace|anticipacion|intercepcion) de (?:la defensa|la zaga|un defensa|un defensor|el portero)\b|^(?:despeja|corta|intercepta|roba|rechaza) (?:la defensa|la zaga|el portero|un defensa)\b/;
+        function otherTeamName(team) {
+            if (team === homeTeamName) return awayTeamName;
+            if (team === awayTeamName) return homeTeamName;
+            return null;
+        }
+        function narrationActionTeam(text, playTeam) {
+            const t = String(text || '').trim();
+            try {
+                for (const f of findPlayerMatches(t)) {
+                    const side = sideOfPlayer(f.name);
+                    if (side) return teamNameOfSide(side);
+                }
+            } catch (e) {}
+            if (playTeam && DEF_NONAME_RE.test(stripAccents(t).toLowerCase())) return otherTeamName(playTeam) || playTeam;
+            return playTeam || null;
+        }
+        window.narrationActionTeam = narrationActionTeam;
+        // Equipo que marca: lo dice la línea del marcador que sigue al gol (vale también para goles en propia puerta).
+        function scoringTeamAt(idx, fallback) {
+            const SC = /(?:^|\s)(\d{1,2})-(\d{1,2})\s+\S.*\.\.\.\s*$/;
+            let next = null, prev = [0, 0];
+            for (let i = idx + 1; i < Math.min(narrationLines.length, idx + 8); i++) {
+                const l = narrationLines[i] || '';
+                if (l.includes('Minuto de juego')) break;
+                const m = l.match(SC); if (m) { next = [+m[1], +m[2]]; break; }
+            }
+            if (!next) return fallback;
+            for (let i = idx - 1; i >= 0; i--) { const m = (narrationLines[i] || '').match(SC); if (m) { prev = [+m[1], +m[2]]; break; }
+            }
+            if (next[0] > prev[0] && next[1] === prev[1]) return homeTeamName;
+            if (next[1] > prev[1] && next[0] === prev[0]) return awayTeamName;
+            return fallback;
+        }
+        function paintNarration(div, team) {
+            if (team) {
+                const colors = getTeamColors(team);
+                div.style.background = colors.primary;
+                div.style.color = colors.secondary;
+                div.style.setProperty('--gbg', colors.primary);
+                div.style.setProperty('--gfg', colors.secondary);
+            } else {
+                div.style.background = '#1e1e30';
+                div.style.color = '#e0e0e0';
+            }
+        }
+
         function isRefereeLine(line) {
             const colonIndex = line.indexOf(':');
             return colonIndex !== -1 && /^\(?REF\)?(?=\s|$)/.test(line.substring(colonIndex + 1).trim());
@@ -5754,13 +5819,23 @@
             return `${selectedWeather}, ${temperature} °C`;
         }
 
+        // De noche (desde las 20:00) no hay sol: «Soleado» pasa a ser «Despejado».
+        function isNightMatch() {
+            const m = String(matchTime || '').match(/^(\d{1,2}):/);
+            return !!m && parseInt(m[1], 10) >= 20;
+        }
         function updateWeatherDisplay(weatherString) {
             const weatherDiv = document.getElementById('weather-info');
+            if (isNightMatch()) weatherString = String(weatherString).replace(/^Soleado\b/, 'Despejado');
             let weatherType = weatherString.split(',')[0].trim();
             let iconUrl = '';
             switch (weatherType) {
                 case 'Soleado':
                     iconUrl = 'https://i.imgur.com/VnNEccD.png';
+                    break;
+                case 'Despejado':
+                    iconUrl = '';
+                    weatherString = '🌙 ' + weatherString;
                     break;
                 case 'Nublado':
                     iconUrl = 'https://i.imgur.com/3wsCIsH.png';
@@ -6426,11 +6501,10 @@
             } else {
                 customWeather = null;
             }
-            const weatherString = generateWeatherInfo();
-            updateWeatherDisplay(weatherString);
-            
             const timeInput = document.getElementById('matchTimeInput');
             matchTime = timeInput.value;
+            const weatherString = generateWeatherInfo();
+            updateWeatherDisplay(weatherString);
             updateMatchTimeDisplay();
             
             const homeManagerFile = document.getElementById('homeManagerFile').files[0];
@@ -7103,11 +7177,12 @@
             const refereeIndex = lines.findIndex((l, idx) => idx >= i && l.trim().startsWith('Árbitro'));
             if (refereeIndex !== -1) {
                 const refLine = lines[refereeIndex].trim();
-                const ref = refLine.replace(/^Árbitro\s+/, '').trim();
-                const refParts = ref.split(' ');
-                const refNameRaw = refParts.shift();
+                const ref = refLine.replace(/^Árbitro\s*:?\s*/, '').trim();
+                // «Árbitro Juan_Benitez (par)» (antiguo) o «Árbitro: Juan Benitez (par)» (t514): el nombre es todo lo que va antes del último «(…)».
+                const refM = ref.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
+                const refNameRaw = (refM ? refM[1] : ref).trim();
                 const refName = formatPlayerName(refNameRaw);
-                const refCountry = refParts.join(' ').replace(/^\(|\)$/g, '');
+                const refCountry = refM ? refM[2].trim() : '';
                 originalRefereeInfo = `Árbitro: ${refName} (${refCountry})`;
                 i = refereeIndex + 1;
             }
@@ -7256,6 +7331,18 @@
             showNextLine = function() {
                 if (isPaused) return;
 
+                if (pendingGoalRest) {
+                    const pg = pendingGoalRest; pendingGoalRest = null;
+                    if (pg.at === lineIndex) {
+                        narrationDiv.textContent = pg.text;
+                        narrationDiv.className = '';
+                        applyNarrationStyles();
+                        paintNarration(narrationDiv, pg.team);
+                        timeoutId = setTimeout(showNextLine, nextNarrationDelay());
+                        return;
+                    }
+                }
+
                 if (campoSeekUntilLine != null && lineIndex > campoSeekUntilLine) {
                     stopCampoSeek();
                     return;
@@ -7330,17 +7417,13 @@
                         const colonIndex = line.indexOf(':');
                         if (colonIndex !== -1) {
                             const afterColon = stripLineAlias(line.substring(colonIndex + 1));
-                            narrationDiv.textContent = afterColon;
-                            narrationDiv.className = '';
+                            // S29: minuto sin ocasiones (relleno «---»): recuadro neutro con texto propio
+                            const fillerMin = /^-{3,}$/.test(afterColon.trim()) || afterColon.trim() === '';
+                            const minNum = parseInt(currentPlayMinute, 10) || 0;
+                            narrationDiv.textContent = fillerMin ? (minNum % 2 ? 'Sin ocasiones' : 'Balón en disputa') : afterColon;
+                            narrationDiv.className = fillerMin ? 'filler-minute' : '';
                             applyNarrationStyles();
-                            if (currentTeamColor && !refereeLine) {
-                                const colors = getTeamColors(currentTeamColor);
-                                narrationDiv.style.background = colors.primary;
-                                narrationDiv.style.color = colors.secondary;
-                            } else {
-                                narrationDiv.style.background = '#1e1e30';
-                                narrationDiv.style.color = '#e0e0e0';
-                            }
+                            paintNarration(narrationDiv, (fillerMin || refereeLine) ? null : narrationActionTeam(afterColon, currentTeamColor));
                         }
                         lineIndex++;
                         timeoutId = setTimeout(showNextLine, nextNarrationDelay());
@@ -7411,26 +7494,25 @@
                             cleanLine = cleanLine.substring(kickAlias[0].length);
                         }
 
-                        const goalWord = cleanLine.match(/^¡?Gol!?(?=\s|$)/);
+                        const goalWord = cleanLine.match(/^¡*\s*(?:Gol|GO{2,}L)!*(?=\s|$)/i);
+                        let lineTeam;
                         if (goalWord) {
-                            cleanLine = '¡¡¡GOOOOOOL!!!' + cleanLine.substring(goalWord[0].length);
+                            // S29: primero solo «¡¡¡GOOOOOOL!!!» (parpadeando, color del que marca); el resto, en el siguiente comentario
+                            const scorer = inShootout ? currentTeamColor : scoringTeamAt(lineIndex, currentTeamColor);
+                            const rest = cleanLine.substring(goalWord[0].length).trim();
+                            pendingGoalRest = rest ? { text: rest, team: scorer, at: lineIndex + 1 } : null;
+                            cleanLine = '¡¡¡GOOOOOOL!!!';
                             narrationDiv.textContent = cleanLine;
                             narrationDiv.className = 'goal-event';
+                            lineTeam = scorer;
                         } else {
                             narrationDiv.textContent = cleanLine;
                             narrationDiv.className = '';
+                            lineTeam = inShootout ? currentTeamColor : narrationActionTeam(cleanLine, currentTeamColor);
                         }
 
                         applyNarrationStyles();
-
-                        if (currentTeamColor) {
-                            const colors = getTeamColors(currentTeamColor);
-                            narrationDiv.style.background = colors.primary;
-                            narrationDiv.style.color = colors.secondary;
-                        } else {
-                            narrationDiv.style.background = '#1e1e30';
-                            narrationDiv.style.color = '#e0e0e0';
-                        }
+                        paintNarration(narrationDiv, lineTeam);
                         if (cleanLine.includes('Tarjeta amarilla')) {
                             narrationDiv.style.background = '#fbbf24';
                             narrationDiv.style.color = '#1e293b';
