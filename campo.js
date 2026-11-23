@@ -3389,7 +3389,12 @@
         var SHOTW = /remat|chut|dispar|volea|cabezazo|cabecea|de cabeza|empalma|canonazo|zapatazo|tiro|busca puerta|prueba fortuna|define/;
         var lastChunk = (t.split(/\.\.\./).map(function (x) { return x.trim(); }).filter(Boolean).pop() || '');
         // Córner que nace de un remate desviado («... suelta un cañonazo ... E. Martinez desvía a córner»)
-        if (k === 'corner') return (SHOTW.test(t) && /(desvia|saca|manda|despeja|toca|envia|mete la mano)[a-z ]* a corner|a corner$/.test(lastChunk) && !/banderin|lanza el corner|saca el corner|bota el corner/.test(t)) ? 'save-corner' : null;
+        if (k === 'corner') {
+            if (SHOTW.test(t) && /(desvia|saca|manda|despeja|toca|envia|mete la mano)[a-z ]* a corner|a corner$/.test(lastChunk) && !/banderin|lanza el corner|saca el corner|bota el corner/.test(t)) return 'save-corner';
+            // Córner (corto o al área) que acaba en remate: el desenlace narrado (parada, palo, por encima) se ve.
+            if (SHOTW.test(lastChunk) || SHOTW.test(t.split(/\.\.\./).slice(-2).join(' '))) { var dc = decide(clean(lastChunk)); if (dc === 'save' || dc === 'post' || dc === 'over') return dc; }
+            return null;
+        }
         if (k !== 'shot' && k !== 'oneonone' && k !== 'box' && k !== 'save') {
             // Jugada o contra que acaba en remate al palo, por encima o atrapado: también se representa el tiro.
             if (!/^(play|counter|wing)$/.test(k) || !/(remat|chut|dispar|volea|empalma|cabecea|cabezazo|prueba con un tiro|tiro (colocado|cruzado|seco|lejano))/.test(t)) return null;
@@ -3520,6 +3525,19 @@
     function addOutcome(phases, play, attack) {
         var oc = shotOutcome(play);
         if (!oc || oc === 'goal' || !phases.length) return oc;
+        if (play.kind === 'corner' && oc !== 'save-corner') {
+            // Córner (corto o al área) que acaba en remate: el saque llega al que remata y luego sale el tiro.
+            var spP = phases[phases.length - 1], gxc = attack === 'home' ? 100 : 0, dc = gxc === 100 ? 1 : -1;
+            var far0 = /frontal|desde fuera|lejos|lejano/.test(foldText(play.text || ''));
+            var shP = { x: gxc - dc * (far0 ? 19 : 9) / M_X, y: 50 + (rng() - 0.5) * 14 };
+            var pl2 = clonePlayers(spP.players), bestA = null, bdA = 1e9;
+            Object.keys(pl2).forEach(function (k) { if (k.split(':')[0] !== attack) return; var st = playerState[k]; if (st && st.pos === 'GK') return; var dd = mDist(pl2[k].x, pl2[k].y, shP.x, shP.y); if (dd < bdA) { bdA = dd; bestA = k; } });
+            if (!bestA || !(spP.ballPath || []).length) return oc;
+            pl2[bestA] = { x: shP.x, y: shP.y };
+            spP.players = clonePlayers(pl2);
+            spP.ballPath = [spP.ballPath[0], { x: shP.x, y: shP.y }];
+            phases.push({ players: pl2, ballPath: [{ x: shP.x, y: shP.y }], ms: 700, highlight: spP.highlight });
+        }
         var dir = attack === 'home' ? 1 : -1;
         var gx = attack === 'home' ? 100 : 0;
         var last = phases[phases.length - 1];
