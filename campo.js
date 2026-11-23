@@ -4023,7 +4023,7 @@
         // atacantes: todos menos 2 (3 en las faltas) se quedan atrás vigilando la contra
         var atk = sideKeys(r.side, true).filter(function (k) { return !used[k]; });
         atk.sort(function (a, b) { return (playerState[b].x - playerState[a].x) * dir; });   // los más adelantados primero
-        var stay = isCorner ? 2 : 3;
+        var stay = isCorner ? 1 : 3;
         var up = atk.slice(0, Math.max(0, atk.length - stay)), back = atk.slice(Math.max(0, atk.length - stay));
         var spots = boxSpots(gx, up.length, isCorner ? 3 : 5, isCorner ? 15 : 17, isCorner ? 14 : 16);
         up.forEach(function (k, i) { mv(k, spots[i].x, spots[i].y); });
