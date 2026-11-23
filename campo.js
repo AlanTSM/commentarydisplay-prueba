@@ -3573,7 +3573,8 @@
         if (oc.indexOf('save') === 0 && oc !== 'save-over' && lp.length && ptAtt(from.x, attack) > 88) {
             // Parada: el remate sale de verdad hacia el portero (no es un pase al portero), que sale a por él.
             if (lp.length === 1) lp.unshift({ x: from.x - dir * 9, y: lerp(from.y, 50, 0.3) });
-            var dLine = clamp(Math.abs(gx - from.x) * M_X, 1.2, 5.5);
+            var onLine = /bajo (los )?palos|sobre la (misma )?linea|linea de (gol|meta)/.test(foldText(play.text || ''));
+            var dLine = onLine ? 0.8 : clamp(Math.abs(gx - from.x) * M_X, 1.2, 5.5);
             var sp = { x: gx - dir * dLine / M_X, y: lerp(from.y, 50, 0.55), kind: 'shot' };
             lp[lp.length - 1] = sp;
             var gkL = gkKeyIn(last.players, defSideO);
