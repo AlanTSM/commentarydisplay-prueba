@@ -4028,7 +4028,7 @@
         if (nb) { ball.state = 'held'; ball.owner = nb; return false; }
         if (!(ball.x > 0 && ball.x < 100 && ball.y > 0 && ball.y < 100)) return false;
         r.fetchT = (r.fetchT || 0) + SIM_DT;
-        if (r.fetchT > (maxT || 2.5)) return false;
+        if (r.fetchT > (maxT || 4.5)) return false;
         var k = r.fetcher && playerState[r.fetcher] ? r.fetcher : nearestOf(sideKeys(prefSide, true), ball.x, ball.y);
         if (k && !r.fetcher && mDist(playerState[k].x, playerState[k].y, ball.x, ball.y) > 22) k = nearestOf(sideKeys('home', true).concat(sideKeys('away', true)), ball.x, ball.y) || k;
         r.fetcher = k;
@@ -4091,7 +4091,7 @@
         var dB = mDist(ball.x, ball.y, tgt.x, tgt.y);
         if (ball.state !== 'flight' && dB <= 3.5) { if (!r.foulAt) r.spot = { x: clamp(ball.x, 1, 99), y: clamp(ball.y, 1, 99) }; go(); return; }
         if (!r.launched && (ball.state !== 'flight' || (r.t > 2.2 && !(ball.fl && ball.fl.dur - ball.fl.t < 1.4 && r.t < 5)))) {
-            if (ball.state !== 'flight' && simFetch(r, r.side, 1.6)) return;
+            if (ball.state !== 'flight' && simFetch(r, r.side, 3.2)) return;
             var recv = nearestOf(sideKeys(r.side, true), tgt.x, tgt.y);
             if (ball.state === 'held') { ball.state = 'free'; ball.owner = null; }
             launchBall({ x: tgt.x, y: tgt.y }, dB > 30 ? 'lofted' : 'ground', recv);
@@ -4121,6 +4121,28 @@
 
     // Mientras se forma la barrera, nadie más (compañero, rival que espera el rechace...) se queda encima de ella.
     // Nadie (salvo la barrera y el lanzador) a menos de 3,4 m de un hueco de la barrera.
+    // Cerca de la barrera nadie se queda pegado a otro (marcador encima del atacante): el que no es de la barrera se aparta.
+    function spreadNearWall(r) {
+        var need = 4.0 * sepFactor(), any = false;
+        var ks = Object.keys(playerState).filter(function (k) { var st = playerState[k]; return !st.leaving && k !== r.taker && mDist(st.x, st.y, r.wallAt.x, r.wallAt.y) < 16; });
+        for (var i = 0; i < ks.length; i++) for (var j = i + 1; j < ks.length; j++) {
+            var a = playerState[ks[i]], b = playerState[ks[j]];
+            var inA = r.wall.indexOf(ks[i]) >= 0, inB = r.wall.indexOf(ks[j]) >= 0;
+            if (inA && inB) continue;
+            var d = mDist(a.x, a.y, b.x, b.y);
+            if (d >= need) continue;
+            any = true;
+            var mvK = inA ? ks[j] : (inB ? ks[i] : (a.pos === 'GK' ? ks[j] : ks[i])), o = playerState[mvK], f = mvK === ks[i] ? b : a;
+            if (o.pos === 'GK' && mvK === ks[i] && b.pos !== 'GK') { mvK = ks[j]; o = b; f = a; }
+            var vx = (o.x - f.x) * M_X, vy = (o.y - f.y) * M_Y, l = Math.hypot(vx, vy);
+            if (l < 0.2) { vx = 0; vy = 1; l = 1; }
+            var push = need - d + 0.4;
+            var nx = clamp(o.x + vx / l * push / M_X, 0.5, 99.5), ny = clamp(o.y + vy / l * push / M_Y, 2, 98);
+            o.tx = o.hx = nx; o.ty = o.hy = ny; o.pend = null; o.spd = Math.max(o.spd || 0, 3);
+            if (r.shapeT) r.shapeT.forEach(function (w) { if (w.k === mvK) { w.x = nx; w.y = ny; } });
+        }
+        return any;
+    }
     function wallCrowded(r) {
         var need = 3.4 * sepFactor();
         return Object.keys(playerState).some(function (k) {
@@ -4224,6 +4246,7 @@
             // ... y los que se colocan alrededor (los del rechace, los que se apartan) ya han llegado: nadie cruza la barrera al lanzar.
             if (wallOk && r.waitK) wallOk = r.waitK.every(function (k) { var st = playerState[k]; if (!st) return true; var fx = st.wallDet ? st.wallDet.x : st.tx, fy = st.wallDet ? st.wallDet.y : st.ty; return mDist(st.x, st.y, fx, fy) < 1.0; });
             if (wallOk && r.wallT) wallOk = !wallCrowded(r);
+            if (r.wallT && r.wallAt && spreadNearWall(r)) wallOk = false;
             var shapeOk = true;
             if (r.shapeT && r.shapeT.length && (r.type === 'corner' || r.type === 'free' || r.type === 'goalkick')) {
                 var arrived = 0;
@@ -4940,6 +4963,9 @@
                     var koI0 = pendKo.findIndex(isKoPhase);
                     // Los cambios se hacen con el balón parado: si está en juego, antes sale por la banda
                     // (lo manda fuera el que lo tiene o el más cercano) y el saque de banda espera al cambio.
+                    // Si el balón aún va camino de salir (o a buscarlo para la reanudación), el cambio espera a que esté parado.
+                    var tRs = simClock + 6;
+                    while (simRestart && simRestart.stage < 0 && simClock < tRs) advance(0.1, { attack: simAttackSide, frozen: false, search: false });
                     var inPitch = ball.x > 0.5 && ball.x < 99.5 && ball.y > 0.5 && ball.y < 99.5;
                     if (!simRestart && !ball.goalNet && koI0 < 0 && !koOwed && !seg.jumpFlip && inPitch && mDist(ball.x, ball.y, 50, 50) > 2.5) {
                         var keepPh = motor.phases || [];
