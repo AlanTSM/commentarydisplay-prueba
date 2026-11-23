@@ -3390,7 +3390,12 @@
         var lastChunk = (t.split(/\.\.\./).map(function (x) { return x.trim(); }).filter(Boolean).pop() || '');
         // Córner que nace de un remate desviado («... suelta un cañonazo ... E. Martinez desvía a córner»)
         if (k === 'corner') return (SHOTW.test(t) && /(desvia|saca|manda|despeja|toca|envia|mete la mano)[a-z ]* a corner|a corner$/.test(lastChunk) && !/banderin|lanza el corner|saca el corner|bota el corner/.test(t)) ? 'save-corner' : null;
-        if (k !== 'shot' && k !== 'oneonone' && k !== 'box' && k !== 'save') return null;
+        if (k !== 'shot' && k !== 'oneonone' && k !== 'box' && k !== 'save') {
+            // Jugada o contra que acaba en remate al palo, por encima o atrapado: también se representa el tiro.
+            if (!/^(play|counter|wing)$/.test(k) || !/(remat|chut|dispar|volea|empalma|cabecea|cabezazo|prueba con un tiro|tiro (colocado|cruzado|seco|lejano))/.test(t)) return null;
+            var dk = decide(clean(lastChunk));
+            return dk === 'post' || dk === 'over' || dk === 'save' ? dk : null;
+        }
         // Jugada en el área o mano a mano sin remate (le roban el balón, anticipa el control): no hay desenlace de tiro.
         if (k !== 'shot' && k !== 'save' && !SHOTW.test(t)) return null;
         function clean(x) {
@@ -3540,7 +3545,9 @@
         } else if (oc === 'post') {
             // Al palo (a la altura del poste) o al larguero (sube hasta el travesaño): el rechace vuelve al campo.
             var post = tr.bar ? { x: gx - dir * 0.3, y: 50 + side * rng() * 3, kind: 'bar' } : { x: gx - dir * 0.3, y: 50 + side * 5.3, kind: 'shot', frame: true };
-            path = [from, post, { x: gx - dir * (7 + rng() * 5), y: clamp(post.y + side * (6 + rng() * 10), 12, 88), kind: 'ground' }];
+            var outAfter = /(se va|sale|se marcha) (fuera|por la linea de fondo)|linea de fondo/.test(foldText(play.text || '').split(/\.\.\./).pop() || '');
+            path = outAfter ? [from, post, { x: gx + dir * 1.8, y: clamp(post.y + side * (2 + rng() * 3), 30, 70), kind: 'ground' }]
+                : [from, post, { x: gx - dir * (7 + rng() * 5), y: clamp(post.y + side * (6 + rng() * 10), 12, 88), kind: 'ground' }];
         } else if (oc === 'block') {
             var defSide = attack === 'home' ? 'away' : 'home', best = null, bd = 1e9;
             Object.keys(snap).forEach(function (k) {
@@ -4257,6 +4264,7 @@
         ball.lastSide = r.side;
         if (r.type === 'throw') ball.fl.H = 0.45;
         if (r.kick && r.kick.net) ball.fl.net = true;
+        if (r.kick && r.kick.frame && ball.fl) ball.fl.frame = true;
         ball.fl.born = r.born;   // lanzamiento de una reanudación (puede venir de la jugada anterior)
         if (r.kick && r.kick.kind === 'over') ball.fl.H = 2.6;
         // Penalti: el portero se lanza (al balón si lo para; si no, a menudo al lado contrario).
@@ -4474,7 +4482,7 @@
             else if (/(fuera|desviad|al palo|poste|larguero|travesano|por encima|alto|nubes|lo manda|grada)/.test(tP) && !/(detiene|ataja|para |bloca|despeja|con los pies|vuela|desvia el)/.test(tP)) {
                 if (/(larguero|travesano)/.test(tP) && !/por encima/.test(tP)) pkick = { x: pgx - pfd * 0.3, y: 50 + (pside || 1) * rng() * 2.5, kind: 'bar' };
                 else if (/(por encima|alto|nubes|grada)/.test(tP)) pkick = { x: pgx + pfd * 2.6, y: 50 + pside * 1.5, kind: 'over' };
-                else if (/(al palo|poste|el palo)/.test(tP)) pkick = { x: pgx + pfd * 1.4, y: 50 + (pside || 1) * 5.9, kind: 'shot' };   // pega en el palo y se va
+                else if (/(al palo|poste|el palo)/.test(tP)) pkick = { x: pgx - pfd * 0.3, y: 50 + (pside || 1) * 5.3, kind: 'shot', frame: true };   // pega en el palo
                 else pkick = { x: pgx + pfd * 2.2, y: 50 + (pside || 1) * (7.5 + rng() * 2.5), kind: 'shot' };
             } else pkick = { x: pgx - pfd * 0.6, y: 50 + (pside || 1) * (2.2 + rng() * 1.6), kind: 'shot', save: true };
             var penPh = { players: clonePlayers(first.players), ballPath: [{ x: pspot.x, y: pspot.y }], ms: 3000, highlight: first.highlight, ref: null,
