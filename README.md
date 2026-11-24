@@ -36,3 +36,4 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 - Engranaje con tooltip «Configuración»; «Omitir minutos sin ocasiones» desmarcado por defecto.
 - Configuración: temas «Copa TSM» (vino) y «Simple» (blanco), botón «Aplicar» fijo abajo y quinta fuente «Roboto» (con alternativas para todos los sistemas).
 - Marcador: un icono de tarjeta roja por cada roja, en la esquina superior del equipo, en cuanto la narración la muestra.
+- Con el partido empezado, «Colores suplentes» se oculta y en su hueco aparecen los goleadores con el minuto, en letra pequeña, en cuanto se enciende el glow del gol (los anulados se quitan; los autogoles van con el equipo beneficiado).

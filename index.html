@@ -805,6 +805,10 @@
             flex-wrap: wrap;
         }
         /* S31: tarjetas rojas en las esquinas superiores del marcador (una por roja, cuando la narración la muestra) */
+        /* S31: con el partido empezado, en el hueco de «Colores suplentes» van los goleadores (al encenderse el glow) */
+        body.match-started .alternate-colors-container { display: none !important; }
+        .scorers-list { font-size: 11px; line-height: 1.35; opacity: 0.75; margin-top: 4px; font-style: italic; }
+        .scorers-list div { animation: sbRedIn 0.5s ease-out; }
         .sb-reds { position: absolute; top: 6px; display: flex; gap: 3px; pointer-events: none; }
         .sb-reds.home { left: 8px; } .sb-reds.away { right: 8px; }
         .sb-reds svg { width: 11px; height: 15px; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5)); animation: sbRedIn 0.4s ease-out; }
@@ -3045,6 +3049,7 @@
                             <input type="checkbox" id="home-alternate-colors" class="alternate-colors-checkbox" onchange="toggleAlternateColors('home')">
                             <label for="home-alternate-colors" class="alternate-colors-label">Colores suplentes</label>
                         </div>
+                        <div class="scorers-list" id="scorers-home"></div>
                     </div>
                     <div id="score">0 - 0</div>
                     <div id="away-team">
@@ -3054,6 +3059,7 @@
                             <input type="checkbox" id="away-alternate-colors" class="alternate-colors-checkbox" onchange="toggleAlternateColors('away')">
                             <label for="away-alternate-colors" class="alternate-colors-label">Colores suplentes</label>
                         </div>
+                        <div class="scorers-list" id="scorers-away"></div>
                     </div>
                 </div>
                 <div id="halftime-score"></div>
@@ -5108,7 +5114,7 @@
         // Función para resetear completamente el estado antes de cargar un nuevo partido
         function resetGlobalState() {
             setPossessionLive(false);
-            clearScoreboardReds(); lastNamedTeam = null;
+            clearScoreboardReds(); lastNamedTeam = null; clearScorers(); document.body.classList.remove('match-started');
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = null;
@@ -6940,6 +6946,14 @@
             if (scoreEl.textContent === newScore) return;
             const goalsOf = t => (String(t).match(/\d+/g) || []).slice(0, 2).reduce((a, b) => a + (+b), 0);
             const isGoal = goalsOf(newScore) > goalsOf(scoreEl.textContent);
+            const sides = t => (String(t).match(/\d+/g) || [0, 0]).slice(0, 2).map(Number);
+            const [oh, oa] = sides(scoreEl.textContent), [nh, na] = sides(newScore);
+            if (simulationStarted) {
+                for (let i = oh; i < nh; i++) addScorer('home');
+                for (let i = oa; i < na; i++) addScorer('away');
+                for (let i = nh; i < oh; i++) removeScorer('home');
+                for (let i = na; i < oa; i++) removeScorer('away');
+            }
             scoreEl.textContent = newScore;
             if (!isGoal) { scoreEl.classList.remove('score-glow'); return; }   // S31: el glow, solo con goles
             scoreEl.classList.remove('score-glow');
@@ -7619,6 +7633,27 @@
             if (!box) return;
             box.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 11 15" aria-label="Tarjeta roja"><rect x="0.5" y="0.5" width="10" height="14" rx="1.5" fill="#e11d2e" stroke="#7f0a14" stroke-width="1"/></svg>');
         }
+        const shownScorers = { home: [], away: [] };
+        function renderScorers() {
+            ['home', 'away'].forEach(k => {
+                const el = document.getElementById('scorers-' + k);
+                if (el) el.innerHTML = shownScorers[k].map(g => `<div>${g.text}</div>`).join('');
+            });
+        }
+        function addScorer(side) {
+            const cur = minuteValue(currentPlayMinute || 0);
+            const used = new Set([...shownScorers.home, ...shownScorers.away].map(g => g.ev));
+            const cands = allEventsData.filter(e => (e.type === 'goal' || e.type === 'ownGoal') && e.minute !== 999 && e.minute <= cur + 0.5 && !used.has(e) &&
+                (e.type === 'ownGoal' || e.team === side));
+            cands.sort((a, b) => a.minute - b.minute);
+            const ev = cands.find(e => e.type === 'ownGoal' ? e.team !== side || true : true);
+            const name = ev && ev.player ? formatPlayerName(ev.player) : '';
+            const min = ev ? (ev.label || ev.minute) : (currentPlayMinute || '');
+            shownScorers[side].push({ ev: ev || {}, text: `${name || 'Gol'}${ev && ev.type === 'ownGoal' ? ' (p.p.)' : ''} ${min}'` });
+            renderScorers();
+        }
+        function removeScorer(side) { shownScorers[side].pop(); renderScorers(); }   // gol anulado
+        function clearScorers() { shownScorers.home = []; shownScorers.away = []; renderScorers(); }
         function clearScoreboardReds() { ['home', 'away'].forEach(k => { const b = document.getElementById('sb-reds-' + k); if (b) b.innerHTML = ''; }); }
         function setPossessionLive(on) {
             const c = document.getElementById('possession-bar-container');
@@ -7626,6 +7661,7 @@
         }
         function startSimulation() {
             setPossessionLive(true);
+            document.body.classList.add('match-started');
             const campoSeeking = campoSeekUntil != null;
             simulationStarted = true;
             campoPlaysStarted = 0;
