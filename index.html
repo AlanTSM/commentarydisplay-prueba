@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Narrador dinámico de TSM</title>
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
     <style>
         /* Scrollbar consistente para toda la página */
         ::-webkit-scrollbar {
@@ -354,6 +354,228 @@
             border-color: #00ff8c;
             color: #00ff8c;
         }
+
+        /* S31: temas «Copa TSM» (vino) y «Simple» (blanco) */
+        body.theme-copa-tsm {
+            background: linear-gradient(135deg, #5a1028 0%, #8b2346 50%, #e8b4c4 100%);
+            color: #ffffff;
+        }
+
+        body.theme-copa-tsm .container {
+            background: linear-gradient(180deg, #2b0812 0%, #4a1022 100%);
+            border-color: #8b2346;
+            color: #ffffff;
+        }
+
+        body.theme-copa-tsm .tab-content,
+        body.theme-copa-tsm .team-section,
+        body.theme-copa-tsm .ratings-team,
+        body.theme-copa-tsm .experience-team {
+            background: linear-gradient(180deg, #2b0812 0%, #4a1022 100%);
+            border-color: #8b2346;
+            color: #ffffff;
+        }
+
+        body.theme-copa-tsm .tab {
+            background: linear-gradient(180deg, #2b0812 0%, #4a1022 100%);
+            border-color: #8b2346;
+            color: #ffffff;
+        }
+
+        body.theme-copa-tsm .tab.active {
+            background: linear-gradient(180deg, #8b2346 0%, #5a1028 100%);
+            color: #2b0812;
+            border-color: #e8b4c4;
+        }
+
+        body.theme-copa-tsm button {
+            background: linear-gradient(180deg, #8b2346 0%, #5a1028 100%);
+            border-color: #e8b4c4;
+            color: #2b0812;
+        }
+
+        body.theme-copa-tsm button:hover {
+            background: linear-gradient(180deg, #e8b4c4 0%, #8b2346 100%);
+            box-shadow: 0 4px 12px rgba(232, 180, 196, 0.4);
+        }
+
+        body.theme-copa-tsm #pauseButton {
+            background: linear-gradient(180deg, #ff3333 0%, #cc0000 100%);
+            border-color: #ff6666;
+        }
+
+        body.theme-copa-tsm #pauseButton:hover {
+            background: linear-gradient(180deg, #ff6666 0%, #ff3333 100%);
+            box-shadow: 0 4px 12px rgba(255, 102, 102, 0.4);
+        }
+
+        body.theme-copa-tsm #resetButton,
+        body.theme-copa-tsm #fastForwardButton {
+            background: linear-gradient(180deg, #ffaa00 0%, #ff8800 100%);
+            border-color: #ffcc00;
+        }
+
+        body.theme-copa-tsm #resetButton:hover,
+        body.theme-copa-tsm #fastForwardButton:hover {
+            background: linear-gradient(180deg, #ffcc00 0%, #ffaa00 100%);
+            box-shadow: 0 4px 12px rgba(255, 204, 0, 0.4);
+        }
+
+        body.theme-copa-tsm textarea,
+        body.theme-copa-tsm select {
+            background: #2b0812;
+            border-color: #8b2346;
+            color: #ffffff;
+        }
+
+        body.theme-copa-tsm .stats-table th,
+        body.theme-copa-tsm .experience-table th {
+            background: linear-gradient(180deg, #8b2346 0%, #5a1028 100%);
+            color: #2b0812;
+        }
+
+        body.theme-copa-tsm .player-popup,
+        body.theme-copa-tsm .field-modal-content,
+        body.theme-copa-tsm .popup-content,
+        body.theme-copa-tsm .settings-popup {
+            background: linear-gradient(180deg, #2b0812 0%, #4a1022 100%);
+            border-color: #8b2346;
+        }
+
+        /* Estilos del marcador para tema copa-tsm */
+        body.theme-copa-tsm #scoreboard {
+            background: linear-gradient(180deg, #2b0812 0%, #4a1022 100%);
+            border-color: #8b2346;
+        }
+
+        body.theme-copa-tsm #home-team,
+        body.theme-copa-tsm #away-team,
+        body.theme-copa-tsm #match-header,
+        body.theme-copa-tsm #halftime-score,
+        body.theme-copa-tsm #minute,
+        body.theme-copa-tsm #possession-title {
+            color: #e8b4c4;
+        }
+
+        body.theme-copa-tsm #score {
+            background: linear-gradient(180deg, #2b0812 0%, #4a1022 100%);
+            border-color: #e8b4c4;
+            color: #e8b4c4;
+        }
+
+        body.theme-copa-tsm .tab.active, body.theme-copa-tsm button, body.theme-copa-tsm .stats-table th, body.theme-copa-tsm .experience-table th { color: #ffffff; }
+        body.theme-simple {
+            background: linear-gradient(135deg, #e9e9ee 0%, #c9c9d3 50%, #1e1e30 100%);
+            color: #1e1e30;
+        }
+
+        body.theme-simple .container {
+            background: linear-gradient(180deg, #ffffff 0%, #f4f4f7 100%);
+            border-color: #c9c9d3;
+            color: #1e1e30;
+        }
+
+        body.theme-simple .tab-content,
+        body.theme-simple .team-section,
+        body.theme-simple .ratings-team,
+        body.theme-simple .experience-team {
+            background: linear-gradient(180deg, #ffffff 0%, #f4f4f7 100%);
+            border-color: #c9c9d3;
+            color: #1e1e30;
+        }
+
+        body.theme-simple .tab {
+            background: linear-gradient(180deg, #ffffff 0%, #f4f4f7 100%);
+            border-color: #c9c9d3;
+            color: #1e1e30;
+        }
+
+        body.theme-simple .tab.active {
+            background: linear-gradient(180deg, #c9c9d3 0%, #e9e9ee 100%);
+            color: #1e1e30;
+            border-color: #1e1e30;
+        }
+
+        body.theme-simple button {
+            background: linear-gradient(180deg, #c9c9d3 0%, #e9e9ee 100%);
+            border-color: #1e1e30;
+            color: #1e1e30;
+        }
+
+        body.theme-simple button:hover {
+            background: linear-gradient(180deg, #1e1e30 0%, #c9c9d3 100%);
+            box-shadow: 0 4px 12px rgba(30, 30, 48, 0.4);
+        }
+
+        body.theme-simple #pauseButton {
+            background: linear-gradient(180deg, #ff3333 0%, #cc0000 100%);
+            border-color: #ff6666;
+        }
+
+        body.theme-simple #pauseButton:hover {
+            background: linear-gradient(180deg, #ff6666 0%, #ff3333 100%);
+            box-shadow: 0 4px 12px rgba(255, 102, 102, 0.4);
+        }
+
+        body.theme-simple #resetButton,
+        body.theme-simple #fastForwardButton {
+            background: linear-gradient(180deg, #ffaa00 0%, #ff8800 100%);
+            border-color: #ffcc00;
+        }
+
+        body.theme-simple #resetButton:hover,
+        body.theme-simple #fastForwardButton:hover {
+            background: linear-gradient(180deg, #ffcc00 0%, #ffaa00 100%);
+            box-shadow: 0 4px 12px rgba(255, 204, 0, 0.4);
+        }
+
+        body.theme-simple textarea,
+        body.theme-simple select {
+            background: #ffffff;
+            border-color: #c9c9d3;
+            color: #1e1e30;
+        }
+
+        body.theme-simple .stats-table th,
+        body.theme-simple .experience-table th {
+            background: linear-gradient(180deg, #c9c9d3 0%, #e9e9ee 100%);
+            color: #1e1e30;
+        }
+
+        body.theme-simple .player-popup,
+        body.theme-simple .field-modal-content,
+        body.theme-simple .popup-content,
+        body.theme-simple .settings-popup {
+            background: linear-gradient(180deg, #ffffff 0%, #f4f4f7 100%);
+            border-color: #c9c9d3;
+        }
+
+        /* Estilos del marcador para tema simple */
+        body.theme-simple #scoreboard {
+            background: linear-gradient(180deg, #ffffff 0%, #f4f4f7 100%);
+            border-color: #c9c9d3;
+        }
+
+        body.theme-simple #home-team,
+        body.theme-simple #away-team,
+        body.theme-simple #match-header,
+        body.theme-simple #halftime-score,
+        body.theme-simple #minute,
+        body.theme-simple #possession-title {
+            color: #1e1e30;
+        }
+
+        body.theme-simple #score {
+            background: linear-gradient(180deg, #ffffff 0%, #f4f4f7 100%);
+            border-color: #1e1e30;
+            color: #1e1e30;
+        }
+
+        body.theme-simple { background: #eceef2; }
+        body.theme-simple .settings-popup, body.theme-simple .settings-popup label, body.theme-simple .settings-popup h3, body.theme-simple .settings-popup span { color: #1e1e30; }
+        body.theme-simple .tab.active, body.theme-simple button { color: #1e1e30; }
+        body.theme-simple #pauseButton, body.theme-simple #resetButton, body.theme-simple #fastForwardButton { color: #ffffff; }
+        body.theme-simple #stadium-capacity, body.theme-simple #referee-info, body.theme-simple #weather-info, body.theme-simple #match-time-info { color: #4a4a5a; }
 
         .container {
             max-width: 950px;
@@ -2223,6 +2445,17 @@
         .theme-uefa-conference {
             background: linear-gradient(135deg, #00a86b 0%, #00cc7a 50%, #00ff8c 100%) !important;
         }
+        .theme-copa-tsm {
+            background: linear-gradient(135deg, #4a1022 0%, #8b2346 50%, #b8325e 100%) !important;
+        }
+        .theme-simple {
+            background: linear-gradient(135deg, #ffffff 0%, #f2f2f5 50%, #dcdce3 100%) !important;
+            border: 1px solid #b8b8c4;
+        }
+        /* S31: «Aplicar» siempre a mano, pegado abajo del pop-up mientras se hace scroll */
+        .settings-apply-bar { position: sticky; bottom: -1px; padding: 10px 0 6px; margin-top: 10px; text-align: center; z-index: 3;
+            background: inherit; box-shadow: 0 -8px 12px -8px rgba(0,0,0,0.45); }
+        .settings-apply-bar button { width: 100%; }
 
         /* Flecha volver arriba */
         #back-to-top {
@@ -2991,6 +3224,7 @@
             <option value="'Segoe UI', Tahoma, Geneva, Verdana, sans-serif" selected>Segoe UI</option>
             <option value="'Montserrat', sans-serif">Montserrat</option>
             <option value="monospace">Monospace</option>
+            <option value="'Roboto', 'Helvetica Neue', Helvetica, Arial, sans-serif">Roboto</option>
         </select>
         <label for="fontSize">Tamaño de fuente:</label>
         <select id="fontSize">
@@ -3020,6 +3254,8 @@
             <button class="theme-option theme-uefa-europa" data-theme="uefa-europa" title="UEFA Europa League"></button>
             <button class="theme-option theme-uefa-champions" data-theme="uefa-champions" title="UEFA Champions League"></button>
             <button class="theme-option theme-uefa-conference" data-theme="uefa-conference" title="UEFA Conference League"></button>
+            <button class="theme-option theme-copa-tsm" data-theme="copa-tsm" title="Copa TSM"></button>
+            <button class="theme-option theme-simple" data-theme="simple" title="Simple"></button>
         </div>
 
         <!-- Nueva sección Tipo de alineaciones (renombrado) -->
@@ -3202,7 +3438,7 @@
             <input type="time" id="matchTimeInput" value="20:30">
         </div>
 
-        <button onclick="applySettings()">Aplicar</button>
+        <div class="settings-apply-bar"><button onclick="applySettings()">Aplicar</button></div>
     </div>
     <!-- Botón para volver arriba -->
     <div id="back-to-top" onclick="scrollToTop()">▲</div>
@@ -6137,7 +6373,7 @@
         }
 
         function applyTheme(themeName) {
-            document.body.classList.remove('theme-actual', 'theme-uefa-europa', 'theme-uefa-champions', 'theme-uefa-conference');
+            document.body.classList.remove('theme-actual', 'theme-uefa-europa', 'theme-uefa-champions', 'theme-uefa-conference', 'theme-copa-tsm', 'theme-simple');
             
             if (themeName !== 'actual') {
                 document.body.classList.add(`theme-${themeName}`);

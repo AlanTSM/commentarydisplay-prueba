@@ -34,3 +34,4 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 - Barra «Dominio en los últimos minutos»: solo durante el partido (aparece y desaparece suave), mínimo 10 % por equipo y sin contar cambios, táctica ni instrucciones del mánager.
 - Recuadro de narración: nombres en negrita; marcador, clima, añadido y separadores en color neutro; el gol dura al menos 3 s; la animación y el glow del marcador solo con goles; color por acción también en penaltis y tanda (el portero con su color) y el ganador de la tanda con el suyo.
 - Engranaje con tooltip «Configuración»; «Omitir minutos sin ocasiones» desmarcado por defecto.
+- Configuración: temas «Copa TSM» (vino) y «Simple» (blanco), botón «Aplicar» fijo abajo y quinta fuente «Roboto» (con alternativas para todos los sistemas).
