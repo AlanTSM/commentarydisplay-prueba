@@ -804,7 +804,13 @@
             gap: 15px;
             flex-wrap: wrap;
         }
+        /* S31: tarjetas rojas en las esquinas superiores del marcador (una por roja, cuando la narración la muestra) */
+        .sb-reds { position: absolute; top: 6px; display: flex; gap: 3px; pointer-events: none; }
+        .sb-reds.home { left: 8px; } .sb-reds.away { right: 8px; }
+        .sb-reds svg { width: 11px; height: 15px; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5)); animation: sbRedIn 0.4s ease-out; }
+        @keyframes sbRedIn { from { transform: scale(0.2); opacity: 0; } to { transform: none; opacity: 1; } }
         #scoreboard {
+            position: relative;
             background: linear-gradient(180deg, #2a2a3e 0%, #1e1e30 100%);
             border: 3px solid #533d7d;
             border-radius: 8px;
@@ -3029,7 +3035,7 @@
                 <button id="rewindButton" onclick="rewindFivePlays()" disabled>Retroceder 5 jugadas</button>
                 <button id="fastForwardButton" onclick="fastForwardToEnd()">Ir al final</button>
             </div>
-            <div id="scoreboard">
+            <div id="scoreboard"><div class="sb-reds home" id="sb-reds-home"></div><div class="sb-reds away" id="sb-reds-away"></div>
                 <div id="match-header"></div>
                 <div id="score-display">
                     <div id="home-team">
@@ -5102,6 +5108,7 @@
         // Función para resetear completamente el estado antes de cargar un nuevo partido
         function resetGlobalState() {
             setPossessionLive(false);
+            clearScoreboardReds(); lastNamedTeam = null;
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = null;
@@ -7605,6 +7612,14 @@
             updateRewindButton();
         }
         
+        let lastNamedTeam = null;
+        function addScoreboardRed(team) {
+            const side = team === homeTeamName ? 'home' : (team === awayTeamName ? 'away' : null);
+            const box = side && document.getElementById('sb-reds-' + side);
+            if (!box) return;
+            box.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 11 15" aria-label="Tarjeta roja"><rect x="0.5" y="0.5" width="10" height="14" rx="1.5" fill="#e11d2e" stroke="#7f0a14" stroke-width="1"/></svg>');
+        }
+        function clearScoreboardReds() { ['home', 'away'].forEach(k => { const b = document.getElementById('sb-reds-' + k); if (b) b.innerHTML = ''; }); }
         function setPossessionLive(on) {
             const c = document.getElementById('possession-bar-container');
             if (c) c.classList.toggle('match-live', !!on);
@@ -7749,6 +7764,7 @@
                             // S29: minuto sin ocasiones (relleno «---»): recuadro neutro con texto propio
                             const fillerMin = /^-{3,}$/.test(afterColon.trim()) || afterColon.trim() === '';
                             const minNum = parseInt(currentPlayMinute, 10) || 0;
+                            lastNamedTeam = fillerMin ? null : narrationActionTeam(afterColon, null);
                             if (fillerMin) narrationDiv.textContent = minNum % 2 ? 'Sin ocasiones' : 'Balón en disputa'; else setNarrationText(narrationDiv, afterColon);
                             narrationDiv.className = fillerMin ? 'filler-minute' : '';
                             applyNarrationStyles();
@@ -7850,7 +7866,9 @@
                         } else if (cleanLine.includes('Tarjeta roja')) {
                             narrationDiv.style.background = '#ef4444';
                             narrationDiv.style.color = '#ffffff';
+                            addScoreboardRed(lastNamedTeam || currentTeamColor);
                         }
+                        try { const nm = findPlayerMatches(cleanLine); if (nm.length) { const sd = sideOfPlayer(nm[0].name); if (sd) lastNamedTeam = teamNameOfSide(sd); } } catch (e) {}
                     }
                     lineIndex++;
                     const holdMs = narrHoldMs; narrHoldMs = 0;
