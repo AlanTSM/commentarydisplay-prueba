@@ -27,3 +27,10 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 
 ### S30
 - Sesión de ajustes internos (saques de banda y barrera) sin cambios publicados: los intentos no mejoraban el auditor y se revirtieron.
+
+### S31
+- Partidos sin Home Bonus (pie «timestamp.0»): estadio «TSM Stadium».
+- Imagen del estadio bajo el banquillo local e información bajo el visitante; árbitro como «Árbitro: [bandera] Nombre» con el país al pasar el cursor.
+- Barra «Dominio en los últimos minutos»: solo durante el partido (aparece y desaparece suave), mínimo 10 % por equipo y sin contar cambios, táctica ni instrucciones del mánager.
+- Recuadro de narración: nombres en negrita; marcador, clima, añadido y separadores en color neutro; el gol dura al menos 3 s; la animación y el glow del marcador solo con goles; color por acción también en penaltis y tanda (el portero con su color) y el ganador de la tanda con el suyo.
+- Engranaje con tooltip «Configuración»; «Omitir minutos sin ocasiones» desmarcado por defecto.

@@ -738,12 +738,11 @@
             background: linear-gradient(135deg, #991b1b 0%, #b91c1c 100%);
         }
         #narration.special-event {
-            background: #4a4a4a;
-            font-size: 1.8em;
+            /* S31: los separadores (media parte, final, tanda...) van neutros y sin agrandar: la animación es solo para los goles */
+            background: #1e1e30;
             font-weight: 700;
-            color: #ffffff;
+            color: #e0e0e0;
             text-align: center;
-            text-shadow: 3px 3px 6px rgba(0, 0, 0, 0.5), 0 0 20px rgba(255, 255, 255, 0.7);
             font-family: 'Montserrat', Arial, sans-serif;
             text-transform: uppercase;
             letter-spacing: 3px;
@@ -780,6 +779,10 @@
         #possession-bar-container {
             margin-top: 15px;
         }
+        /* S31: la barra de dominio solo se ve durante el partido (descansos incluidos), con transición suave */
+        #possession-bar-container { opacity: 0; max-height: 0; overflow: hidden; transform: translateY(-4px);
+            transition: opacity 0.6s ease, max-height 0.6s ease, transform 0.6s ease, margin-top 0.6s ease; margin-top: 0; }
+        #possession-bar-container.match-live { opacity: 1; max-height: 80px; transform: none; margin-top: 15px; }
         #possession-title {
             text-align: center;
             font-size: 14px;
@@ -1914,6 +1917,14 @@
             font-style: italic;
             padding: 10px;
         }
+        /* S31: imagen del estadio bajo el banquillo local y la información bajo el banquillo visitante (mismas columnas que las alineaciones) */
+        #stadium-container { justify-content: space-between; gap: 40px; max-width: none; flex-wrap: nowrap; align-items: center; }
+        #stadium-image-wrapper { flex: 1 1 0; max-width: none; display: flex; justify-content: center; min-width: 0; }
+        #stadium-image { max-width: min(400px, 100%); }
+        #stadium-info-column { flex: 1 1 0; padding-left: 20px; }
+        .referee-flag { vertical-align: middle; cursor: help; }
+        .referee-country { cursor: help; }
+        @media (max-width: 768px) { #stadium-container { flex-wrap: wrap; } #stadium-image-wrapper, #stadium-info-column { flex-basis: 100%; } }
         #referee-info {
             color: #b8b8d1;
             font-size: 14px;
@@ -2826,7 +2837,7 @@
                 <div class="tab" onclick="switchTab('ratings-tab')">Puntuaciones</div>
                 <div class="tab" onclick="switchTab('experience-tab')">Pts. Exp.</div>
                 <div class="tab" onclick="switchTab('campo-tab')">Vista 2D <span class="tab-beta" title="En desarrollo: no es la versión definitiva">Beta</span></div>
-                <span class="settings-icon" onclick="openSettingsPopup()">⚙️</span>
+                <span class="settings-icon" onclick="openSettingsPopup()" title="Configuración" aria-label="Configuración" role="button">⚙️</span>
             </div>
 
             <!-- Contenido de las pestañas -->
@@ -2995,7 +3006,7 @@
             <label for="boldText">Texto en negrita</label>
         </div>
         <div style="display: flex; align-items: center; margin-bottom: 10px;">
-            <input type="checkbox" id="skipEmptyMinutes" style="margin-right: 10px;" checked="checked">
+            <input type="checkbox" id="skipEmptyMinutes" style="margin-right: 10px;">
             <label for="skipEmptyMinutes">Omitir minutos sin ocasiones</label>
         </div>
         <p id="skipWarning" style="font-size: 12px; color: #ffcc00; display: none; margin-top: 0; margin-bottom: 20px;">Opción solo disponible antes del inicio</p>
@@ -3229,13 +3240,14 @@
         let playerStats = null;
         let matchTransitions = {};
         let simulationStarted = false;
-        let skipEmptyMinutes = true;
+        let skipEmptyMinutes = false;
         let campoSeekUntil = null;
         let campoSeekPlayIndex = null;
         let campoSeekUntilLine = null;
         let campoPlaysStarted = 0;
         let lineGateSince = 0;
-        let pendingGoalRest = null;   // S29: tras «¡¡¡GOOOOOOL!!!» solo, el resto de la frase va en el siguiente comentario
+        let pendingGoalRest = null;
+        let narrHoldMs = 0;   // S29: tras «¡¡¡GOOOOOOL!!!» solo, el resto de la frase va en el siguiente comentario
         let rawInput = '';
         let showAlternateColorsField = true;
         let currentTheme = 'actual';
@@ -4853,6 +4865,7 @@
 
         // Función para resetear completamente el estado antes de cargar un nuevo partido
         function resetGlobalState() {
+            setPossessionLive(false);
             if (timeoutId) {
                 clearTimeout(timeoutId);
                 timeoutId = null;
@@ -5128,11 +5141,38 @@
             updateRefereeDisplay();
         }
 
+        // S31: nombre del país de cada código de nacionalidad (tooltip de la bandera del árbitro)
+        const COUNTRY_NAMES = {"esp": "España", "por": "Portugal", "fra": "Francia", "ger": "Alemania", "ale": "Alemania", "ita": "Italia", "eng": "Inglaterra", "ing": "Inglaterra", "ned": "Países Bajos", "hol": "Países Bajos", "bel": "Bélgica", "arg": "Argentina", "bra": "Brasil", "uru": "Uruguay", "par": "Paraguay", "chi": "Chile", "col": "Colombia", "per": "Perú", "ecu": "Ecuador", "ven": "Venezuela", "bol": "Bolivia", "mex": "México", "usa": "Estados Unidos", "can": "Canadá", "aus": "Australia", "ksa": "Arabia Saudí", "jor": "Jordania", "jpn": "Japón", "kor": "Corea del Sur", "chn": "China", "irn": "Irán", "qat": "Catar", "uae": "Emiratos Árabes Unidos", "egy": "Egipto", "mar": "Marruecos", "alg": "Argelia", "tun": "Túnez", "sen": "Senegal", "nga": "Nigeria", "gha": "Ghana", "cmr": "Camerún", "civ": "Costa de Marfil", "rsa": "Sudáfrica", "tur": "Turquía", "gre": "Grecia", "sui": "Suiza", "aut": "Austria", "pol": "Polonia", "cze": "Chequia", "svk": "Eslovaquia", "cro": "Croacia", "srb": "Serbia", "svn": "Eslovenia", "slo": "Eslovenia", "bih": "Bosnia y Herzegovina", "mne": "Montenegro", "mkd": "Macedonia del Norte", "alb": "Albania", "rou": "Rumanía", "rom": "Rumanía", "bul": "Bulgaria", "hun": "Hungría", "ukr": "Ucrania", "rus": "Rusia", "den": "Dinamarca", "swe": "Suecia", "nor": "Noruega", "fin": "Finlandia", "isl": "Islandia", "irl": "Irlanda", "sco": "Escocia", "wal": "Gales", "nir": "Irlanda del Norte", "isr": "Israel", "geo": "Georgia", "arm": "Armenia", "aze": "Azerbaiyán", "kaz": "Kazajistán", "uzb": "Uzbekistán", "crc": "Costa Rica", "hon": "Honduras", "pan": "Panamá", "jam": "Jamaica", "slv": "El Salvador", "gua": "Guatemala", "cub": "Cuba", "nzl": "Nueva Zelanda", "ind": "India", "tha": "Tailandia", "idn": "Indonesia", "mli": "Malí", "gui": "Guinea", "cod": "RD Congo", "ang": "Angola", "bfa": "Burkina Faso", "cpv": "Cabo Verde", "gab": "Gabón", "kos": "Kosovo", "lux": "Luxemburgo", "cyp": "Chipre", "kuw": "Kuwait", "irq": "Irak", "zam": "Zambia", "ken": "Kenia", "tog": "Togo", "ben": "Benín", "hai": "Haití"};
+        function countryCodeFromName(txt) {
+            const k = stripAccents(String(txt || '')).toLowerCase().trim();
+            for (const c in COUNTRY_NAMES) if (stripAccents(COUNTRY_NAMES[c]).toLowerCase() === k) return c;
+            return null;
+        }
+        // «Árbitro: [bandera] Nombre»: la bandera sale de la misma base que las de los jugadores, con el país como tooltip.
+        function refereeHTML(name, code) {
+            let c = String(code || '').trim().toLowerCase();
+            if (c && !COUNTRY_NAMES[c] && !flagsDB[c]) { const cc = countryCodeFromName(c); if (cc) c = cc; }
+            const country = COUNTRY_NAMES[c] || (c ? c.toUpperCase() : '');
+            const url = c ? (flagsDB[c] || '') : '';
+            const esc = t => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+            const flag = url ? `<img src="${esc(url)}" alt="${esc(country)}" title="${esc(country)}" class="player-flag referee-flag">` :
+                (c ? `<span class="referee-country" title="${esc(country)}">(${esc(c.toUpperCase())})</span>` : '');
+            return `Árbitro: ${flag ? flag + ' ' : ''}${esc(name)}`;
+        }
+        // «Joao Pinheiro Portugal» (copiado del foro, la bandera queda como texto): separa el país del final.
+        function splitRefereeCountry(raw) {
+            const w = String(raw || '').trim().split(/\s+/);
+            for (let n = Math.min(4, w.length - 1); n >= 1; n--) {
+                const cc = countryCodeFromName(w.slice(w.length - n).join(' '));
+                if (cc) return { name: w.slice(0, w.length - n).join(' '), code: cc };
+            }
+            return { name: raw, code: '' };
+        }
         function updateRefereeDisplay() {
             const refereeInfoDiv = document.getElementById('referee-info');
             if (customReferee && customReferee.name) {
                 const formattedName = formatPlayerName(customReferee.name);
-                refereeInfoDiv.innerHTML = `Árbitro: ${formattedName} (${customReferee.nationality.toUpperCase()})`;
+                refereeInfoDiv.innerHTML = refereeHTML(formattedName, customReferee.nationality);
             }
         }
 
@@ -5263,7 +5303,8 @@
             const awayColors = getTeamColors(awayTeamName);
             const homeCount = recentPlays.filter(team => team === homeTeamName).length;
             const total = recentPlays.length || 1;
-            const homePercent = (homeCount / total) * 100;
+            // S31: ningún equipo baja nunca del 10 %
+            const homePercent = recentPlays.length ? Math.min(90, Math.max(10, (homeCount / total) * 100)) : 50;
             bar.style.background = `linear-gradient(to right, ${homeColors.primary} 0% ${homePercent}%, ${awayColors.primary} ${homePercent}% 100%)`;
         }
         
@@ -5542,7 +5583,7 @@
                 document.getElementById('minute').textContent = 'Tanda de penaltis';
             }
             if (marker.kind === 'final') {
-                matchFinished = true;
+                matchFinished = true; setPossessionLive(false);
                 matchStats = extractMatchStats();
                 playerStats = extractPlayerStats();
                 if (document.getElementById('stats-tab').classList.contains('active')) {
@@ -5616,7 +5657,30 @@
         // S29: color por acción. Manda el equipo del primer jugador nombrado en la frase (quien hace la acción:
         // «Cuti Romero llega al corte», «Paradón de Neuer», «Falta de X sobre Y»...). Sin nombres, las acciones
         // defensivas genéricas («La defensa despeja», «el portero corta de puños»...) van con el color del rival.
-        const DEF_NONAME_RE = /^(?:la defensa|la zaga|la retaguardia|un defensa|un defensor|un central|el portero|el guardameta|el meta|el arquero)\b|\b(?:el portero|el guardameta|el meta|el arquero)\s+(?:corta|atrapa|bloca|ataja|despeja|detiene|se queda|sale|vuela|desvia|rechaza|blocca)|\b(?:despeje|corte|rechace|anticipacion|intercepcion) de (?:la defensa|la zaga|un defensa|un defensor|el portero)\b|^(?:despeja|corta|intercepta|roba|rechaza) (?:la defensa|la zaga|el portero|un defensa)\b/;
+        const DEF_NONAME_RE = /^(?:la defensa|la zaga|la retaguardia|un defensa|un defensor|un central|el portero|el guardameta|el meta|el arquero)\b|\b(?:el portero|el guardameta|el meta|el arquero)\s+(?:corta|atrapa|bloca|ataja|despeja|detiene|se queda|sale|vuela|desvia|rechaza|blocca)|\b(?:despeje|corte|rechace|anticipacion|intercepcion) de (?:la defensa|la zaga|un defensa|un defensor|el portero)\b|^(?:despeja|corta|intercepta|roba|rechaza) (?:la defensa|la zaga|el portero|un defensa)\b|^¡?(?:parada|paradon|que parada|lo para el portero|atajada)\b/;
+        // S31: líneas que van siempre en color neutro: marcador («Real Madrid 1-0 Inter ...»), clima, añadido y separadores.
+        const NEUTRAL_LINE_RE = /(?:^|\s)\d{1,2}-\d{1,2}\s+\S.*\.\.\.\s*$|^\*{3,}|llovizna|lluvia|cesped esta humedo|terreno algo pesado|el balon resbala|cuarto arbitro|prolongacion|minutos? de (?:anadido|descuento)|tiempo anadido|megafonia|^fin de la (?:primera|segunda) parte|^tanda de penaltis|^no hay prolongacion/;
+        function isNeutralLine(text) { return NEUTRAL_LINE_RE.test(stripAccents(String(text || '')).toLowerCase().trim()); }
+        // «Real Madrid gana la tanda de penaltis»: color del ganador
+        function shootoutWinnerTeam(text) {
+            const m = String(text || '').match(/^(.+?)\s+gana la tanda/i);
+            if (!m) return null;
+            const t = stripAccents(m[1]).toLowerCase().trim();
+            if (t === stripAccents(homeTeamName).toLowerCase()) return homeTeamName;
+            if (t === stripAccents(awayTeamName).toLowerCase()) return awayTeamName;
+            return null;
+        }
+        // S31: nombres de los jugadores en negrita en el recuadro de narración
+        function setNarrationText(div, text) {
+            const t = String(text || '');
+            let ms = [];
+            try { ms = findPlayerMatches(t); } catch (e) { ms = []; }
+            if (!ms.length) { div.textContent = t; return; }
+            const esc = x => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            let out = '', last = 0;
+            ms.forEach(f => { out += esc(t.substring(last, f.index)) + '<b class="narr-player">' + esc(t.substring(f.index, f.end)) + '</b>'; last = f.end; });
+            div.innerHTML = out + esc(t.substring(last));
+        }
         function otherTeamName(team) {
             if (team === homeTeamName) return awayTeamName;
             if (team === awayTeamName) return homeTeamName;
@@ -5663,6 +5727,15 @@
             }
         }
 
+        // S31: comentarios que no son juego (cambios, táctica, instrucciones del mánager, añadido): no cuentan para
+        // la barra de dominio ni para el momentum.
+        const NON_PLAY_RE = /^(?:entra .+ por |cambio en |movimiento en el banquillo|cambio de tactica|sustitucion|cambio:)|ajusta la agresividad|tras (?:el tanto|encajar|el gol)|pide mas metros|presion alta|reacciona tras encajar|paso adelante|empuja desde la banda|adelantar lineas|bloque de presion|sale a morder|no se hunde|suben la intensidad|el (?:entrenador|tecnico|mister)\b|cuerpo tecnico|se queja al cuarto arbitro|cuarto arbitro|prolongacion|de anadido|minutos? de descuento|tiempo anadido|megafonia|instrucci/;
+        function isNonPlayLine(text) {
+            const t = stripAccents(String(text || '')).toLowerCase().trim();
+            return NON_PLAY_RE.test(t) || !!detectTacticChange('x:' + text, null);
+        }
+        window.isNonPlayLine = isNonPlayLine;
+
         function isRefereeLine(line) {
             const colonIndex = line.indexOf(':');
             return colonIndex !== -1 && /^\(?REF\)?(?=\s|$)/.test(line.substring(colonIndex + 1).trim());
@@ -5703,6 +5776,14 @@
             }
         }
 
+        // Código tras el timestamp del pie: «.HB» = con Home Bonus, «.0» = campo neutral (también «.100» = 100 % de bonus).
+        function reportHomeBonusCode() {
+            const m = String(originalNarrationText || '').match(/\d{6,}\.(\w+)\s+Produced from esms_real/i) ||
+                      String(window.__lastReportText || '').match(/\d{6,}\.(\w+)\s+Produced from esms_real/i);
+            return m ? m[1] : null;
+        }
+        function isNeutralVenue() { return reportHomeBonusCode() === '0'; }
+
         async function fetchStadiumCapacity() {
             try {
                 const response = await fetch('https://www.tusoccermanager.com/h99-stadiacapacity-html');
@@ -5736,7 +5817,8 @@
                 stadiumImg.src = customStadiumImageUrl;
             } else {
                 const homeLower = homeTeamName.toLowerCase();
-                const homeStadiumUrl = stadiaDB[homeLower] || stadiaDB[homeLower.replace(/fc /g, '')] || stadiaDB[homeLower.replace(' ', '')] || null;
+                // S31: partido sin Home Bonus (pie «timestamp.0 Produced from esms_real»): estadio neutral «TSM Stadium»
+                const homeStadiumUrl = (isNeutralVenue() && (stadiaDB['tsm stadium'] || 'https://2img.net/i.imgur.com/8hYGosh.png')) || stadiaDB[homeLower] || stadiaDB[homeLower.replace(/fc /g, '')] || stadiaDB[homeLower.replace(' ', '')] || null;
                 if (homeStadiumUrl) {
                     stadiumImg.src = homeStadiumUrl;
                 } else {
@@ -6613,7 +6695,10 @@
         function updateScoreDisplay(newScore) {
             const scoreEl = document.getElementById('score');
             if (scoreEl.textContent === newScore) return;
+            const goalsOf = t => (String(t).match(/\d+/g) || []).slice(0, 2).reduce((a, b) => a + (+b), 0);
+            const isGoal = goalsOf(newScore) > goalsOf(scoreEl.textContent);
             scoreEl.textContent = newScore;
+            if (!isGoal) { scoreEl.classList.remove('score-glow'); return; }   // S31: el glow, solo con goles
             scoreEl.classList.remove('score-glow');
             void scoreEl.offsetWidth;
             scoreEl.classList.add('score-glow');
@@ -6971,6 +7056,7 @@
             }
             
             resetGlobalState();
+            window.__lastReportText = input;
             
             originalNarrationText = input;
             reportFormat = detectReportFormat(input);
@@ -7180,10 +7266,9 @@
                 const ref = refLine.replace(/^Árbitro\s*:?\s*/, '').trim();
                 // «Árbitro Juan_Benitez (par)» (antiguo) o «Árbitro: Juan Benitez (par)» (t514): el nombre es todo lo que va antes del último «(…)».
                 const refM = ref.match(/^(.*?)\s*\(([^()]*)\)\s*$/);
-                const refNameRaw = (refM ? refM[1] : ref).trim();
-                const refName = formatPlayerName(refNameRaw);
-                const refCountry = refM ? refM[2].trim() : '';
-                originalRefereeInfo = `Árbitro: ${refName} (${refCountry})`;
+                const refSplit = refM ? { name: refM[1].trim(), code: refM[2].trim() } : splitRefereeCountry(ref);
+                const refName = formatPlayerName(refSplit.name);
+                originalRefereeInfo = refereeHTML(refName, refSplit.code);
                 i = refereeIndex + 1;
             }
 
@@ -7196,7 +7281,7 @@
             
             if (customReferee && customReferee.name) {
                 const formattedRefName = formatPlayerName(customReferee.name);
-                document.getElementById('referee-info').innerHTML = `Árbitro: ${formattedRefName} (${customReferee.nationality.toUpperCase()})`;
+                document.getElementById('referee-info').innerHTML = refereeHTML(formattedRefName, customReferee.nationality);
             } else {
                 document.getElementById('referee-info').innerHTML = originalRefereeInfo;
             }
@@ -7284,7 +7369,12 @@
             updateRewindButton();
         }
         
+        function setPossessionLive(on) {
+            const c = document.getElementById('possession-bar-container');
+            if (c) c.classList.toggle('match-live', !!on);
+        }
         function startSimulation() {
+            setPossessionLive(true);
             const campoSeeking = campoSeekUntil != null;
             simulationStarted = true;
             campoPlaysStarted = 0;
@@ -7334,7 +7424,7 @@
                 if (pendingGoalRest) {
                     const pg = pendingGoalRest; pendingGoalRest = null;
                     if (pg.at === lineIndex) {
-                        narrationDiv.textContent = pg.text;
+                        setNarrationText(narrationDiv, pg.text);
                         narrationDiv.className = '';
                         applyNarrationStyles();
                         paintNarration(narrationDiv, pg.team);
@@ -7402,9 +7492,12 @@
                         if (detectedTeam) {
                             currentTeamColor = detectedTeam;
                             currentPlayTeam = detectedTeam;
-                            recentPlays.push(detectedTeam);
-                            if (recentPlays.length > 10) recentPlays.shift();
-                            updatePossessionBar();
+                            const minText = stripLineAlias(line.substring(line.indexOf(':') + 1));
+                            if (!isNonPlayLine(minText) && !/^-{3,}$/.test(minText.trim())) {
+                                recentPlays.push(detectedTeam);
+                                if (recentPlays.length > 10) recentPlays.shift();
+                                updatePossessionBar();
+                            }
                         }
                         const tacticChange = detectTacticChange(rawLine, detectedTeam);
                         if (tacticChange) {
@@ -7420,10 +7513,10 @@
                             // S29: minuto sin ocasiones (relleno «---»): recuadro neutro con texto propio
                             const fillerMin = /^-{3,}$/.test(afterColon.trim()) || afterColon.trim() === '';
                             const minNum = parseInt(currentPlayMinute, 10) || 0;
-                            narrationDiv.textContent = fillerMin ? (minNum % 2 ? 'Sin ocasiones' : 'Balón en disputa') : afterColon;
+                            if (fillerMin) narrationDiv.textContent = minNum % 2 ? 'Sin ocasiones' : 'Balón en disputa'; else setNarrationText(narrationDiv, afterColon);
                             narrationDiv.className = fillerMin ? 'filler-minute' : '';
                             applyNarrationStyles();
-                            paintNarration(narrationDiv, (fillerMin || refereeLine) ? null : narrationActionTeam(afterColon, currentTeamColor));
+                            paintNarration(narrationDiv, (fillerMin || refereeLine || isNeutralLine(afterColon)) ? null : narrationActionTeam(afterColon, currentTeamColor));
                         }
                         lineIndex++;
                         timeoutId = setTimeout(showNextLine, nextNarrationDelay());
@@ -7450,7 +7543,7 @@
                         }
                         document.getElementById('minute').textContent = 'Finalizado';
                         document.getElementById('narration').style.display = 'none';
-                        matchFinished = true;
+                        matchFinished = true; setPossessionLive(false);
                         matchStats = extractMatchStats();
                         playerStats = extractPlayerStats();
                         if (document.getElementById('stats-tab').classList.contains('active')) {
@@ -7505,10 +7598,12 @@
                             narrationDiv.textContent = cleanLine;
                             narrationDiv.className = 'goal-event';
                             lineTeam = scorer;
+                            narrHoldMs = 3000;   // S31: el gol se ve al menos 3 s, sea cual sea la velocidad
                         } else {
-                            narrationDiv.textContent = cleanLine;
+                            setNarrationText(narrationDiv, cleanLine);
                             narrationDiv.className = '';
-                            lineTeam = inShootout ? currentTeamColor : narrationActionTeam(cleanLine, currentTeamColor);
+                            // S31: color por acción también en penaltis y tanda (el portero con su color); neutras las de marcador/clima
+                            lineTeam = isNeutralLine(cleanLine) ? null : (shootoutWinnerTeam(cleanLine) || narrationActionTeam(cleanLine, currentTeamColor));
                         }
 
                         applyNarrationStyles();
@@ -7522,7 +7617,8 @@
                         }
                     }
                     lineIndex++;
-                    timeoutId = setTimeout(showNextLine, nextNarrationDelay());
+                    const holdMs = narrHoldMs; narrHoldMs = 0;
+                    timeoutId = setTimeout(showNextLine, campoSeeking ? nextNarrationDelay() : Math.max(holdMs, nextNarrationDelay()));
                 }
             }
 
@@ -7713,7 +7809,7 @@
                     }
                     document.getElementById('minute').textContent = 'Finalizado';
                     narrationDiv.style.display = 'none';
-                    matchFinished = true;
+                    matchFinished = true; setPossessionLive(false);
                     matchStats = extractMatchStats();
                     playerStats = extractPlayerStats();
                     if (document.getElementById('stats-tab').classList.contains('active')) {
