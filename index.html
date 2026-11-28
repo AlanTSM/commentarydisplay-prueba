@@ -7502,7 +7502,7 @@
             let i = 0;
             while (i < lines.length && lines[i].trim() === '') i++;
             let fullHeader = cleanReportHeader(lines[i].trim());
-            fullHeader = fullHeader.replace(/\b(?=[A-Z]{2,})(?=.*[a-z])(?=.*\d)[A-Za-z\d]+\b/g, '');
+            // S34: no se recortan siglas de la competición (TSM, UEFA, IDA…). cleanReportHeader ya quita el ruido del foro.
             fullHeader = fullHeader.replace(/ +/g, ' ').trim();
             const commaIndex = fullHeader.indexOf(',');
             let competition = fullHeader.substring(0, commaIndex).trim();
