@@ -392,3 +392,85 @@ html.campo-noscroll, html.campo-noscroll body { overflow: hidden; }
     .campo-resume { font-size: 13px; padding: 9px 14px; }
     .campo-beta { font-size: 9px; padding: 1px 6px; }
 }
+
+/* S34: selector de modo y Vista 3D (Estadio) */
+.campo-view-label {
+    display: flex;
+    align-items: center;
+    margin: 0;
+}
+.campo-view-label select {
+    background: linear-gradient(180deg, #3a2a55 0%, #2a1a40 100%);
+    color: #f0eaf8;
+    border: 1px solid #9d4edd;
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-weight: 700;
+    font-size: 12.5px;
+    cursor: pointer;
+    min-width: 150px;
+    font-family: inherit;
+}
+.campo-view-label select:hover { filter: brightness(1.08); }
+.campo-wrap.campo-expanded .campo-view-label select { min-height: 32px; padding: 4px 8px; font-size: 12px; min-width: 148px; }
+
+.campo-wrap:not(.campo-view-stadium) .campo-fig { display: none; }
+.campo-wrap.campo-view-stadium .campo-player .campo-disk,
+.campo-wrap.campo-view-stadium .campo-player .campo-outline,
+.campo-wrap.campo-view-stadium .campo-ref .campo-disk { display: none; }
+.campo-wrap.campo-view-stadium .campo-fig { display: block; }
+.campo-wrap.campo-view-stadium .campo-player .campo-dorsal,
+.campo-wrap.campo-view-stadium .campo-ref .campo-dorsal {
+    transform: translateY(-16px);
+    font-size: 8px;
+}
+.campo-wrap.campo-view-stadium .campo-player .campo-name,
+.campo-wrap.campo-view-stadium .campo-ref .campo-name {
+    fill: #fde047;
+    stroke: #111;
+    stroke-width: 3.2;
+    paint-order: stroke;
+    transform: translateY(-72px);
+    font-size: 11px;
+    display: none;
+}
+.campo-wrap.campo-view-stadium .campo-player.is-active .campo-name,
+.campo-wrap.campo-view-stadium .campo-player.campo-on-ball .campo-name { display: block; }
+
+.campo-touch-bar {
+    position: absolute;
+    left: 12px;
+    right: 12px;
+    bottom: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: linear-gradient(180deg, rgba(18,18,28,0.88) 0%, rgba(8,8,14,0.92) 100%);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px;
+    padding: 5px 12px;
+    color: #f4f4f8;
+    font-weight: 800;
+    letter-spacing: 0.3px;
+    font-size: 14px;
+    pointer-events: none;
+    z-index: 4;
+}
+.campo-touch-bar[hidden] { display: none; }
+.campo-wrap:not(.campo-view-stadium) .campo-touch-bar { display: none !important; }
+.campo-touch-ev {
+    background: #c81e1e;
+    color: #fff;
+    padding: 2px 10px;
+    border-radius: 3px;
+    font-size: 13px;
+    letter-spacing: 1px;
+}
+.campo-touch-ev[hidden] { display: none; }
+
+.campo-wrap.campo-view-stadium .campo-pitch-box { background: #12121a; }
+.campo-wrap.campo-view-stadium.campo-expanded .campo-pitch-box svg {
+    width: min(100%, calc((100dvh - 150px) * 1130 / 800));
+    width: min(100%, calc((100vh - 150px) * 1130 / 800));
+}

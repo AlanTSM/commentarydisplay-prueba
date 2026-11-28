@@ -189,6 +189,7 @@
             Object.keys(playerState).forEach(function (key) { placePlayerEl(playerState[key]); });
             placeRefEl();
             placeBall();
+            sortActors();
         }
     }
 
@@ -249,11 +250,276 @@
         return out;
     }
 
+    var viewMode = 'flat';   // 'flat' | 'stadium'  (S34: Vista clásica 2D / Vista 3D Estadio)
+    var sceneFlat = null, sceneStad = null;
+    var VB = { w: 1130, h: 752 };
+
     function toSvg(x, y) {
-        return {
+        var p = {
             x: PITCH.x + (x / 100) * PITCH.w,
             y: PITCH.y + (y / 100) * PITCH.h
         };
+        return pitchPt(p.x, p.y);
+    }
+
+    function pitchPt(sx, sy) {
+        if (viewMode !== 'stadium') return { x: sx, y: sy };
+        var t = (sy - PITCH.y) / PITCH.h;
+        var widthFar = PITCH.w * 0.56;
+        var widthNear = PITCH.w * 1.15;
+        var wt = widthFar + (widthNear - widthFar) * t;
+        var midX = 565 + 30;
+        var x0 = (sx - (PITCH.x + PITCH.w / 2)) / (PITCH.w / 2);
+        var yTop = 92, yBot = 705;
+        return { x: midX + x0 * (wt / 2) - 24 * (1 - t), y: yTop + t * (yBot - yTop) };
+    }
+
+    function depthScale(y100) {
+        if (viewMode !== 'stadium') return 1;
+        var t = Math.max(0, Math.min(1, y100 / 100));
+        return 0.72 + 0.42 * t;
+    }
+
+    function setViewMode(mode) {
+        var next = (mode === 'stadium') ? 'stadium' : 'flat';
+        var wrap = root && root.querySelector('.campo-wrap');
+        var sel = $('campo-view-mode');
+        if (sel && sel.value !== next) sel.value = next;
+        if (wrap) wrap.classList.toggle('campo-view-stadium', next === 'stadium');
+        if (viewMode === next && sceneStad) { updateTouchBar(); return; }
+        viewMode = next;
+        if (!svg) return;
+        ensureScenes();
+        if (sceneFlat) sceneFlat.style.display = viewMode === 'flat' ? '' : 'none';
+        if (sceneStad) sceneStad.style.display = viewMode === 'stadium' ? '' : 'none';
+        svg.setAttribute('viewBox', '0 0 ' + VB.w + ' ' + (viewMode === 'stadium' ? 800 : VB.h));
+        Object.keys(playerState).forEach(function (k) { placePlayerEl(playerState[k]); });
+        placeRefEl();
+        placeBall();
+        sortActors();
+        updateTouchBar();
+        applyCompactNames();
+    }
+
+    function polyPts(pts) { return pts.map(function (p) { return p.x.toFixed(1) + ',' + p.y.toFixed(1); }).join(' '); }
+
+    function ensureScenes() {
+        if (viewMode === 'stadium' && !sceneStad && svg) paintGroundStadium();
+    }
+
+    function paintGroundStadium() {
+        if (sceneStad && sceneStad.parentNode) sceneStad.parentNode.removeChild(sceneStad);
+        sceneStad = svgEl('g', { 'class': 'campo-scene-stadium' });
+        var x = PITCH.x, y = PITCH.y, w = PITCH.w, h = PITCH.h;
+        var scale = w / 105;
+        function m(meters) { return meters * scale; }
+        function P(sx, sy) { return pitchPt(sx, sy); }
+        // gradas / fondo del estadio
+        sceneStad.appendChild(svgEl('rect', { x: 0, y: 0, width: VB.w, height: 800, fill: '#12121a' }));
+        var stand = [P(x - 80, y - 70), P(x + w + 80, y - 70), P(x + w + 30, y - 8), P(x - 30, y - 8)];
+        sceneStad.appendChild(svgEl('polygon', { points: polyPts(stand), fill: '#2a2a38' }));
+        var stand2 = [P(x - 70, y - 48), P(x + w + 70, y - 48), P(x + w + 24, y - 8), P(x - 24, y - 8)];
+        sceneStad.appendChild(svgEl('polygon', { points: polyPts(stand2), fill: '#1c1c28' }));
+        // césped a franjas (bandas a lo largo del campo)
+        var nStr = 14, sw = w / nStr;
+        var i, pal = ['#1a7a3c', '#176f36'];
+        for (i = 0; i < nStr; i++) {
+            var x0 = x + i * sw, x1 = x0 + sw;
+            sceneStad.appendChild(svgEl('polygon', { points: polyPts([P(x0, y), P(x1, y), P(x1, y + h), P(x0, y + h)]), fill: pal[i % 2] }));
+        }
+        function addLine(x1, y1, x2, y2, parent, swd) {
+            var a = P(x1, y1), b = P(x2, y2);
+            parent.appendChild(svgEl('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, fill: 'none', stroke: 'rgba(255,255,255,0.9)', 'stroke-width': swd || 2.2 }));
+        }
+        function addRing(cx, cy, r, n, parent) {
+            var pts = [], k;
+            for (k = 0; k <= n; k++) {
+                var ang = k / n * Math.PI * 2;
+                pts.push(P(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r));
+            }
+            parent.appendChild(svgEl('polyline', { points: polyPts(pts), fill: 'none', stroke: 'rgba(255,255,255,0.9)', 'stroke-width': 2.2 }));
+        }
+        function addRect(rx, ry, rw, rh, parent) {
+            parent.appendChild(svgEl('polygon', { points: polyPts([P(rx, ry), P(rx + rw, ry), P(rx + rw, ry + rh), P(rx, ry + rh)]), fill: 'none', stroke: 'rgba(255,255,255,0.9)', 'stroke-width': 2.2 }));
+        }
+        var lines = svgEl('g', { 'class': 'campo-stad-lines' });
+        addRect(x, y, w, h, lines);
+        addLine(x + w / 2, y, x + w / 2, y + h, lines);
+        addRing(x + w / 2, y + h / 2, m(9.15), 48, lines);
+        var mid = P(x + w / 2, y + h / 2);
+        lines.appendChild(svgEl('circle', { cx: mid.x, cy: mid.y, r: 3, fill: '#fff', stroke: 'none' }));
+        var boxW = m(16.5), boxH = m(40.32), boxY = y + (h - boxH) / 2;
+        var sixW = m(5.5), sixH = m(18.32), sixY = y + (h - sixH) / 2;
+        var spot = m(11);
+        addRect(x, boxY, boxW, boxH, lines);
+        addRect(x + w - boxW, boxY, boxW, boxH, lines);
+        addRect(x, sixY, sixW, sixH, lines);
+        addRect(x + w - sixW, sixY, sixW, sixH, lines);
+        var spL = P(x + spot, y + h / 2), spR = P(x + w - spot, y + h / 2);
+        lines.appendChild(svgEl('circle', { cx: spL.x, cy: spL.y, r: 3, fill: '#fff', stroke: 'none' }));
+        lines.appendChild(svgEl('circle', { cx: spR.x, cy: spR.y, r: 3, fill: '#fff', stroke: 'none' }));
+        // media luna: muestreo del arco
+        function addArcSample(cx, cy, r, offset, home, parent) {
+            var d0 = offset; if (d0 >= r) return;
+            var ang = Math.acos(d0 / r), k, pts = [];
+            for (k = 0; k <= 16; k++) {
+                var a = -ang + (2 * ang) * (k / 16);
+                var px = home ? cx + Math.cos(a) * r : cx - Math.cos(a) * r;
+                // wait, original arc is along x=const at box line... use same formula as arcPath
+            }
+            // sample using original geometry: center at penalty, only outside the box
+            for (k = 0; k <= 16; k++) {
+                var a2 = -ang + (2 * ang) * (k / 16);
+                var sx = home ? cx + Math.cos(Math.PI / 2 - a2) * 0 : 0;
+            }
+            var ptsA = [];
+            for (k = 0; k <= 18; k++) {
+                var a3 = -ang + (2 * ang) * (k / 18);
+                var sx3 = home ? cx + Math.cos(a3) * r : cx - Math.cos(a3) * r;
+                // Actually the 2D arc is: x fixed at cx±(boxW-spot), y varies. Better sample circle points with x beyond the box.
+                var px3 = cx + Math.cos(a3) * (home ? r : -r);
+                var py3 = cy + Math.sin(a3) * r;
+                // only the part toward midfield: for home, px > x+boxW
+                if (home && px3 < x + boxW - 0.5) continue;
+                if (!home && px3 > x + w - boxW + 0.5) continue;
+                ptsA.push(P(px3, py3));
+            }
+            if (ptsA.length > 1) parent.appendChild(svgEl('polyline', { points: polyPts(ptsA), fill: 'none', stroke: 'rgba(255,255,255,0.9)', 'stroke-width': 2.2 }));
+        }
+        addArcSample(x + spot, y + h / 2, m(9.15), boxW - spot, true, lines);
+        addArcSample(x + w - spot, y + h / 2, m(9.15), boxW - spot, false, lines);
+        var cr = m(1);
+        function corner(cx, cy, q, parent) {
+            var pts = [], k;
+            for (k = 0; k <= 6; k++) {
+                var a = (q * Math.PI / 2) + (k / 6) * (Math.PI / 2);
+                // q 0: from +x to +y at top-left corner, etc.
+                var ang0 = [0, Math.PI / 2, Math.PI, 3 * Math.PI / 2][q];
+                var ang1 = ang0 + Math.PI / 2;
+                var an = ang0 + (k / 6) * (Math.PI / 2);
+                pts.push(P(cx + Math.cos(an) * cr, cy + Math.sin(an) * cr));
+            }
+            parent.appendChild(svgEl('polyline', { points: polyPts(pts), fill: 'none', stroke: 'rgba(255,255,255,0.9)', 'stroke-width': 2 }));
+        }
+        corner(x, y, 0, lines);
+        corner(x + w, y, 1, lines);
+        corner(x + w, y + h, 2, lines);
+        corner(x, y + h, 3, lines);
+        sceneStad.appendChild(lines);
+
+        // vallas publicitarias con grosor alrededor
+        var AD = [['TSM TV', '#e11d48', '#ffffff'], ['LA REVISTA DE TSM', '#1e1b4b', '#facc15'], ['TSM TV', '#e11d48', '#ffffff'], ['LA REVISTA DE TSM', '#1e1b4b', '#facc15']];
+        function boardSeg(sx1, sy1, sx2, sy2, up, fill, label, ink) {
+            var a = P(sx1, sy1), b = P(sx2, sy2);
+            var g = svgEl('g', { 'class': 'campo-ad-board' });
+            // grosor (cara superior un poco detrás / abajo)
+            var thick = 5;
+            g.appendChild(svgEl('polygon', { points: polyPts([
+                { x: a.x, y: a.y + thick }, { x: b.x, y: b.y + thick }, { x: b.x, y: b.y }, { x: a.x, y: a.y }
+            ]), fill: '#0a0a10', opacity: 0.85 }));
+            g.appendChild(svgEl('polygon', { points: polyPts([
+                { x: a.x, y: a.y }, { x: b.x, y: b.y }, { x: b.x, y: b.y - up }, { x: a.x, y: a.y - up }
+            ]), fill: fill, stroke: 'rgba(255,255,255,0.28)', 'stroke-width': 1 }));
+            if (label) {
+                var tm = svgEl('text', { x: ((a.x + b.x) / 2).toFixed(1), y: ((a.y + b.y) / 2 - up * 0.38).toFixed(1), 'text-anchor': 'middle', fill: ink, 'font-size': '11', 'font-weight': '800', 'letter-spacing': '1.2', 'font-family': 'Segoe UI, sans-serif' });
+                tm.textContent = label;
+                g.appendChild(tm);
+            }
+            sceneStad.appendChild(g);
+        }
+        var adY = y - 6, adH = 22;
+        var adX0 = x + 40, adW = (w - 80) / AD.length;
+        AD.forEach(function (a, i) {
+            boardSeg(adX0 + i * adW, adY, adX0 + (i + 1) * adW, adY, 16, a[1], a[0], a[2]);
+        });
+        // bandas laterales (sin texto, color alterno)
+        boardSeg(x - 6, y, x - 6, y + h, 12, '#e11d48', '', '#fff');
+        boardSeg(x + w + 6, y, x + w + 6, y + h, 12, '#1e1b4b', '', '#facc15');
+        boardSeg(x, y + h + 6, x + w, y + h + 6, 11, '#e11d48', 'TSM TV', '#fff');
+
+        // porterías 3D con red
+        function goal3d(gx, left) {
+            var goalH = m(7.32), goalY = y + (h - goalH) / 2;
+            var back = left ? -18 : 18;
+            var p1 = P(gx, goalY), p2 = P(gx, goalY + goalH);
+            var b1 = P(gx + back, goalY), b2 = P(gx + back, goalH + goalY);
+            var up = 32;
+            var g = svgEl('g', { 'class': 'campo-goal-3d', fill: 'none', stroke: 'rgba(255,255,255,0.95)', 'stroke-width': 3 });
+            // red
+            var net = svgEl('g', { stroke: 'rgba(255,255,255,0.4)', 'stroke-width': 0.9 });
+            var qi, qj;
+            for (qi = 0; qi <= 4; qi++) {
+                var t = qi / 4;
+                var fa = { x: p1.x + (p2.x - p1.x) * t, y: p1.y + (p2.y - p1.y) * t };
+                var ba = { x: b1.x + (b2.x - b1.x) * t, y: b1.y + (b2.y - b1.y) * t };
+                net.appendChild(svgEl('line', { x1: fa.x, y1: fa.y, x2: ba.x, y2: ba.y }));
+                net.appendChild(svgEl('line', { x1: fa.x, y1: fa.y - up, x2: ba.x, y2: ba.y - up * 0.85 }));
+            }
+            for (qj = 0; qj <= 5; qj++) {
+                var u = qj / 5;
+                net.appendChild(svgEl('line', { x1: p1.x, y1: p1.y - up * u, x2: p2.x, y2: p2.y - up * u }));
+                net.appendChild(svgEl('line', { x1: b1.x, y1: b1.y - up * 0.85 * u, x2: b2.x, y2: b2.y - up * 0.85 * u }));
+            }
+            g.appendChild(net);
+            // palos y larguero
+            g.appendChild(svgEl('line', { x1: p1.x, y1: p1.y, x2: p1.x, y2: p1.y - up, 'stroke-width': 4 }));
+            g.appendChild(svgEl('line', { x1: p2.x, y1: p2.y, x2: p2.x, y2: p2.y - up, 'stroke-width': 4 }));
+            g.appendChild(svgEl('line', { x1: p1.x, y1: p1.y - up, x2: p2.x, y2: p2.y - up, 'stroke-width': 4 }));
+            g.appendChild(svgEl('line', { x1: b1.x, y1: b1.y, x2: b1.x, y2: b1.y - up * 0.85, 'stroke-width': 2.4 }));
+            g.appendChild(svgEl('line', { x1: b2.x, y1: b2.y, x2: b2.x, y2: b2.y - up * 0.85, 'stroke-width': 2.4 }));
+            g.appendChild(svgEl('line', { x1: b1.x, y1: b1.y - up * 0.85, x2: b2.x, y2: b2.y - up * 0.85, 'stroke-width': 2.4 }));
+            sceneStad.appendChild(g);
+        }
+        goal3d(x, true);
+        goal3d(x + w, false);
+
+        // insert stadium scene behind players
+        if (playersLayer && playersLayer.parentNode === svg) svg.insertBefore(sceneStad, playersLayer);
+        else svg.appendChild(sceneStad);
+    }
+
+    function sortActors() {
+        if (viewMode !== 'stadium' || !playersLayer) return;
+        var items = Array.prototype.slice.call(playersLayer.childNodes);
+        items.sort(function (a, b) {
+            function yy(el) {
+                var m = (el.getAttribute('transform') || '').match(/translate\(([^,]+),\s*([^)\s]+)/);
+                return m ? parseFloat(m[2]) : 0;
+            }
+            return yy(a) - yy(b);
+        });
+        items.forEach(function (el) { playersLayer.appendChild(el); });
+    }
+
+    function updateTouchBar() {
+        var bar = $('campo-touch-bar');
+        if (!bar) return;
+        if (viewMode !== 'stadium') { bar.hidden = true; return; }
+        bar.hidden = false;
+        var who = bar.querySelector('.campo-touch-who');
+        var ev = bar.querySelector('.campo-touch-ev');
+        var label = '', num = '';
+        if (ball.owner && playerState[ball.owner] && playerState[ball.owner].el) {
+            var el = playerState[ball.owner].el;
+            label = el.getAttribute('data-name') || ball.owner;
+            num = el.getAttribute('data-num') || '';
+            if (typeof shortName === 'function') label = shortName(label) || label;
+        }
+        if (who) who.textContent = label ? ((num ? num + '  ' : '') + label) : '';
+        var isGoal = false;
+        try {
+            if (pb && pb.seg && parsedPlays && parsedPlays[pb.seg.i] && /goal/.test(parsedPlays[pb.seg.i].kind || '')) isGoal = true;
+        } catch (e) {}
+        if (ev) ev.hidden = !isGoal;
+        // nombre en amarillo junto al que lleva el balón
+        if (playersLayer) {
+            Array.prototype.forEach.call(playersLayer.querySelectorAll('.campo-player'), function (g) {
+                var on = !!(ball.owner && g.getAttribute('data-name') && (keyOf(g.getAttribute('data-side'), g.getAttribute('data-name')) === ball.owner || g.getAttribute('data-name') === (playerState[ball.owner] && playerState[ball.owner].el && playerState[ball.owner].el.getAttribute('data-name'))));
+                // ball.owner is usually the key "side:name"
+                var key = keyOf(g.getAttribute('data-side'), g.getAttribute('data-name'));
+                g.classList.toggle('campo-on-ball', key === ball.owner);
+            });
+        }
     }
 
     // «Balón llovido al punto de penalti», «envío hacia el punto de penalti»: un centro al área, no un penalti.
@@ -797,15 +1063,18 @@
             '</filter>' +
             '<clipPath id="campo-clip"><rect x="' + PITCH.x + '" y="' + PITCH.y + '" width="' + PITCH.w + '" height="' + PITCH.h + '"/></clipPath>';
         svg.appendChild(defs);
+        sceneFlat = svgEl('g', { 'class': 'campo-scene-flat' });
+        svg.appendChild(sceneFlat);
+        sceneStad = null;
 
         var bg = svgEl('rect', { x: 0, y: 0, width: vbW, height: vbH, fill: '#0b3b1c' });
-        svg.appendChild(bg);
+        sceneFlat.appendChild(bg);
 
         var x = PITCH.x, y = PITCH.y, w = PITCH.w, h = PITCH.h;
         var scale = w / 105;
         function m(meters) { return meters * scale; }
 
-        svg.appendChild(svgEl('rect', { x: x, y: y, width: w, height: h, fill: 'url(#campo-stripes)' }));
+        sceneFlat.appendChild(svgEl('rect', { x: x, y: y, width: w, height: h, fill: 'url(#campo-stripes)' }));
 
         var lines = svgEl('g', { fill: 'none', stroke: 'rgba(255,255,255,0.9)', 'stroke-width': 3 });
         lines.appendChild(svgEl('rect', { x: x, y: y, width: w, height: h }));
@@ -831,7 +1100,7 @@
         lines.appendChild(svgEl('path', { d: cornerArc(x + w, y, cr, 1) }));
         lines.appendChild(svgEl('path', { d: cornerArc(x + w, y + h, cr, 2) }));
         lines.appendChild(svgEl('path', { d: cornerArc(x, y + h, cr, 3) }));
-        svg.appendChild(lines);
+        sceneFlat.appendChild(lines);
 
         var goalW = m(2.2), goalH = m(7.32), goalY = y + (h - goalH) / 2;
         var goals = svgEl('g', { fill: 'none', stroke: 'rgba(255,255,255,0.95)', 'stroke-width': 4 });
@@ -843,9 +1112,9 @@
             var gx0 = nd[1];
             for (var qi = 1; qi < 4; qi++) net.appendChild(svgEl('line', { x1: gx0 + goalW * qi / 4, y1: goalY, x2: gx0 + goalW * qi / 4, y2: goalY + goalH }));
             for (var qj = 1; qj < 9; qj++) net.appendChild(svgEl('line', { x1: gx0, y1: goalY + goalH * qj / 9, x2: gx0 + goalW, y2: goalY + goalH * qj / 9 }));
-            svg.appendChild(net);
+            sceneFlat.appendChild(net);
         });
-        svg.appendChild(goals);
+        sceneFlat.appendChild(goals);
 
         // Pancartas publicitarias en el lateral alto (detrás de la línea de banda de arriba).
         var ads = svgEl('g', { 'class': 'campo-ads', 'pointer-events': 'none' });
@@ -858,7 +1127,7 @@
             at.textContent = a[0];
             ads.appendChild(at);
         });
-        svg.appendChild(ads);
+        sceneFlat.appendChild(ads);
 
         var labels = svgEl('g', { fill: 'rgba(255,255,255,0.45)', 'font-size': '14', 'font-family': 'Segoe UI, sans-serif', 'text-anchor': 'middle' });
         var lblL = textAt(x + 80, y + 22, ends.flipped ? 'Visitante' : 'Local');
@@ -866,7 +1135,7 @@
         labels.appendChild(lblL);
         labels.appendChild(lblR);
         ends.labels = [lblL, lblR];
-        svg.appendChild(labels);
+        sceneFlat.appendChild(labels);
 
         // Fuera del campo (banda de abajo): banquillos, entrenadores y asistencias.
         offLayer = svgEl('g', { 'class': 'campo-off' });
@@ -874,7 +1143,7 @@
         staffLayer = svgEl('g', { 'class': 'campo-staff-layer' });
         offLayer.appendChild(benchLayer);
         offLayer.appendChild(staffLayer);
-        svg.appendChild(offLayer);
+        sceneFlat.appendChild(offLayer);
         benchSig = '';
         managers = { home: null, away: null };
 
@@ -2611,6 +2880,7 @@
         if (near && !isGoalPoint(end)) { ball.state = 'held'; ball.owner = near; }
         else { ball.state = 'free'; ball.owner = null; ball.lock = isGoalPoint(end); }
         placeBall();
+        sortActors();
         if (ph.highlight) highlightPlayers(ph.highlight);
         if (ui.caption) ui.caption.classList.toggle('kickoff-on', !!ph.kickoff);
         motor.phase = null;
@@ -2715,27 +2985,39 @@
     function placeBall() {
         if (!ballEl) return;
         var p = toView(ball.x, ball.y);
-        var bk = 1 + (nodeScale - 1) * 0.8;
+        var vis = visOf(ball.x, ball.y);
+        var bk = (1 + (nodeScale - 1) * 0.8) * depthScale(vis.y);
         var h = ball.h || 0;
         // Balón bombeado: sube (se dibuja más arriba y más grande) y su sombra queda en el suelo.
         var lift = h * 26 * bk;
         var sc = bk * (1 + h * 0.45);
         ballEl.setAttribute('transform', 'translate(' + p.x.toFixed(2) + ',' + (p.y - lift).toFixed(2) + ')' + (sc !== 1 ? ' scale(' + sc.toFixed(3) + ')' : ''));
         if (ballShadowEl) {
+            var sh = viewMode === 'stadium' ? Math.max(0.28, h > 0.02 ? (0.5 - h * 0.15) : 0.32) : (h > 0.02 ? (0.45 - h * 0.15) : 0);
             ballShadowEl.setAttribute('transform', 'translate(' + p.x.toFixed(2) + ',' + (p.y + 6 * bk).toFixed(2) + ') scale(' + (bk * (1 - h * 0.35)).toFixed(3) + ')');
-            ballShadowEl.setAttribute('opacity', h > 0.02 ? (0.45 - h * 0.15).toFixed(2) : '0');
+            ballShadowEl.setAttribute('opacity', String(sh));
         }
+        updateTouchBar();
     }
 
     function placeRefEl() {
         if (!refState || !refState.el) return;
         var p = toView(refState.x, refState.y);
-        refState.el.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')' + (nodeScale !== 1 ? ' scale(' + nodeScale.toFixed(3) + ')' : ''));
+        var vis = visOf(refState.x, refState.y);
+        var sc = nodeScale * depthScale(vis.y);
+        refState.el.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')' + (sc !== 1 ? ' scale(' + sc.toFixed(3) + ')' : ''));
     }
 
     function buildRefNode(name) {
         var short = shortName(name) || 'Árbitro';
         var g = svgEl('g', { 'class': 'campo-ref', 'data-name': name, filter: 'url(#campo-shadow)' });
+        var figR = svgEl('g', { 'class': 'campo-fig', 'pointer-events': 'none' });
+        figR.appendChild(svgEl('ellipse', { 'class': 'campo-fig-shadow', cx: 2.5, cy: 5, rx: 10, ry: 4.2, fill: '#000', opacity: '0.38' }));
+        figR.appendChild(svgEl('rect', { x: -4.8, y: -7, width: 4, height: 9, rx: 1.3, fill: '#111' }));
+        figR.appendChild(svgEl('rect', { x: 1, y: -7, width: 4, height: 9, rx: 1.3, fill: '#111' }));
+        figR.appendChild(svgEl('path', { 'class': 'campo-fig-body', d: 'M-7.6,-6 L-8.5,-19 Q-8.5,-23.5 0,-23.5 Q8.5,-23.5 8.5,-19 L7.6,-6 Z', fill: '#111111', stroke: '#f3f3f3', 'stroke-width': 1.1 }));
+        figR.appendChild(svgEl('circle', { 'class': 'campo-fig-head', cx: 0, cy: -29.5, r: 6, fill: '#e6c8a0', stroke: 'rgba(0,0,0,0.28)', 'stroke-width': 0.8 }));
+        g.appendChild(figR);
         g.appendChild(svgEl('circle', {
             r: 18, fill: '#111111', stroke: '#f3f3f3', 'stroke-width': 2.4, 'class': 'campo-disk'
         }));
@@ -2775,7 +3057,9 @@
     function placePlayerEl(st) {
         if (!st || !st.el) return;
         var p = toView(st.x, st.y);
-        st.el.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')' + (nodeScale !== 1 ? ' scale(' + nodeScale.toFixed(3) + ')' : ''));
+        var vis = visOf(st.x, st.y);
+        var sc = nodeScale * depthScale(vis.y);
+        st.el.setAttribute('transform', 'translate(' + p.x + ',' + p.y + ')' + (sc !== 1 ? ' scale(' + sc.toFixed(3) + ')' : ''));
     }
 
     /* ================= Sesión 10: cambio de campo, banquillos, cambios, expulsiones, lesiones y entrenadores =================
@@ -5676,10 +5960,15 @@
             '<div class="campo-pitch-box" id="campo-pitch-box">' +
                 '<span class="campo-beta" title="Vista 2D en desarrollo: no es la versión definitiva">Fase Beta</span>' +
                 '<button type="button" class="campo-resume" id="campo-resume" hidden>Iniciar segunda parte</button>' +
+                '<div class="campo-touch-bar" id="campo-touch-bar" hidden><span class="campo-touch-who"></span><span class="campo-touch-ev" hidden>GOL</span></div>' +
             '</div>' +
             '<div class="campo-caption" id="campo-caption">Pega un informe y pulsa «Comenzar partido» para ver el movimiento.</div>' +
             '<div class="campo-controls">' +
                 '<button type="button" id="campo-fs" class="campo-fs-btn" title="Ver el campo a pantalla completa (en el móvil, gíralo en horizontal)">Ampliar</button>' +
+                '<label class="campo-view-label" title="Modo de visualización del campo"><select id="campo-view-mode" aria-label="Modo de visualización">' +
+                    '<option value="flat">Vista clásica 2D</option>' +
+                    '<option value="stadium">Vista 3D (Estadio)</option>' +
+                '</select></label>' +
                 '<button type="button" id="campo-play">Comenzar</button>' +
                 '<input type="range" class="campo-slider" id="campo-slider" min="0" max="90" value="0" step="1" aria-label="Jugada">' +
             '</div>' +
@@ -5698,6 +5987,11 @@
         ui.awaySwatch = $('campo-away-swatch');
 
         ui.fs = $('campo-fs');
+        ui.viewMode = $('campo-view-mode');
+        if (ui.viewMode) {
+            ui.viewMode.value = viewMode;
+            ui.viewMode.addEventListener('change', function () { setViewMode(ui.viewMode.value); });
+        }
         ui.resume = $('campo-resume');
         ui.resume.addEventListener('click', function () {
             ui.resume.hidden = true;
@@ -6174,6 +6468,13 @@
             filter: 'url(#campo-shadow)'
         });
         if (isGk) g.classList.add('campo-gk');
+        var fig = svgEl('g', { 'class': 'campo-fig', 'pointer-events': 'none' });
+        fig.appendChild(svgEl('ellipse', { 'class': 'campo-fig-shadow', cx: 2.5, cy: 5, rx: 11, ry: 4.6, fill: '#000', opacity: '0.38' }));
+        fig.appendChild(svgEl('rect', { x: -5.2, y: -7, width: 4.2, height: 9, rx: 1.3, fill: '#1c1c1c' }));
+        fig.appendChild(svgEl('rect', { x: 1.2, y: -7, width: 4.2, height: 9, rx: 1.3, fill: '#1c1c1c' }));
+        fig.appendChild(svgEl('path', { 'class': 'campo-fig-body', d: 'M-8.2,-6 L-9.2,-20 Q-9.2,-24.5 0,-24.5 Q9.2,-24.5 9.2,-20 L8.2,-6 Z', fill: primary, stroke: secondary, 'stroke-width': 1.15 }));
+        fig.appendChild(svgEl('circle', { 'class': 'campo-fig-head', cx: 0, cy: -30.5, r: 6.3, fill: '#e6c8a0', stroke: 'rgba(0,0,0,0.28)', 'stroke-width': 0.8 }));
+        g.appendChild(fig);
         if (kit.outline) {
             g.appendChild(svgEl('circle', {
                 r: 22.6, fill: 'none', stroke: kit.outline, 'stroke-width': 1.6,
