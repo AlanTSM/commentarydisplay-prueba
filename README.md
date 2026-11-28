@@ -41,3 +41,6 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 ### S32
 - Nombres en negrita del recuadro de narración: espacio delante y detrás, sin pegarse al texto ni añadir espacio antes de comas o puntos.
 - Escudos y nombres del marcador siempre a la misma altura; la lista de goleadores queda debajo y no los desplaza.
+- Entre varias jugadas del mismo minuto el recuadro desaparece 1 segundo (el minuto no avanza; la Vista 2D no se altera).
+- En los minutos sin ocasiones el recuadro no aparece (el minuto sí avanza). «Omitir minutos sin ocasiones» sigue saltándolos del todo.
+- «MEDIA PARTE», «PRÓRROGA», «FINAL», «TANDA DE PENALTIS» y las líneas de resultado van en color neutro en todos los temas.

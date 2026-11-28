@@ -1009,6 +1009,15 @@
         }
         #narration .narr-text { min-width: 0; }
         #narration .narr-player { font-weight: 800; }
+        /* S32: el recuadro se oculta cuando no hay comentario o entre jugadas del mismo minuto */
+        #narration.narration-idle {
+            visibility: hidden;
+            opacity: 0;
+            border-color: transparent;
+            background: transparent !important;
+            box-shadow: none !important;
+            color: transparent !important;
+        }
         #possession-bar-container {
             margin-top: 15px;
         }
@@ -3505,6 +3514,8 @@
         let lineGateSince = 0;
         let pendingGoalRest = null;
         let narrHoldMs = 0;   // S29: tras «¡¡¡GOOOOOOL!!!» solo, el resto de la frase va en el siguiente comentario
+        let skipSameMinuteGap = false;  // S32: evita repetir la pausa de 1 s al reanudar
+        let prevShownPlayMinute = null; // último minuto cuya jugada sí se mostró en el recuadro
         let rawInput = '';
         let showAlternateColorsField = true;
         let currentTheme = 'actual';
@@ -5182,6 +5193,9 @@
             document.getElementById('narration').style.color = '#e0e0e0';
             document.getElementById('narration').style.display = 'flex';
             document.getElementById('narration').className = '';
+            setNarrationVisible(false);
+            skipSameMinuteGap = false;
+            prevShownPlayMinute = null;
             document.getElementById('possession-bar').style.background = '';
             updatePossessionBar();
         }
@@ -5837,6 +5851,9 @@
 
             narrationDiv.textContent = marker.text;
             narrationDiv.className = 'special-event';
+            applyNarrationStyles();
+            paintNarration(narrationDiv, null);
+            setNarrationVisible(true);
             if (marker.kind === 'shootout') {
                 document.getElementById('minute').textContent = 'Tanda de penaltis';
             }
@@ -5917,7 +5934,7 @@
         // defensivas genéricas («La defensa despeja», «el portero corta de puños»...) van con el color del rival.
         const DEF_NONAME_RE = /^(?:la defensa|la zaga|la retaguardia|un defensa|un defensor|un central|el portero|el guardameta|el meta|el arquero)\b|\b(?:el portero|el guardameta|el meta|el arquero)\s+(?:corta|atrapa|bloca|ataja|despeja|detiene|se queda|sale|vuela|desvia|rechaza|blocca)|\b(?:despeje|corte|rechace|anticipacion|intercepcion) de (?:la defensa|la zaga|un defensa|un defensor|el portero)\b|^(?:despeja|corta|intercepta|roba|rechaza) (?:la defensa|la zaga|el portero|un defensa)\b|^¡?(?:parada|paradon|que parada|lo para el portero|atajada)\b/;
         // S31: líneas que van siempre en color neutro: marcador («Real Madrid 1-0 Inter ...»), clima, añadido y separadores.
-        const NEUTRAL_LINE_RE = /(?:^|\s)\d{1,2}-\d{1,2}\s+\S.*\.\.\.\s*$|^\*{3,}|llovizna|lluvia|cesped esta humedo|terreno algo pesado|el balon resbala|cuarto arbitro|prolongacion|minutos? de (?:anadido|descuento)|tiempo anadido|megafonia|^fin de la (?:primera|segunda) parte|^tanda de penaltis|^no hay prolongacion/;
+        const NEUTRAL_LINE_RE = /(?:^|\s)\d{1,2}\s*-\s*\d{1,2}\s+\S|^(?:resultado\b)|\*{3,}|llovizna|lluvia|cesped esta humedo|terreno algo pesado|el balon resbala|cuarto arbitro|prolongacion|minutos? de (?:anadido|descuento)|tiempo anadido|megafonia|^fin de la (?:primera|segunda) parte|^tanda de penaltis|^no hay prolongacion|^media parte|^prorroga|^final(?: del partido)?$/;
         function isNeutralLine(text) { return NEUTRAL_LINE_RE.test(stripAccents(String(text || '')).toLowerCase().trim()); }
         // «Real Madrid gana la tanda de penaltis»: color del ganador
         function shootoutWinnerTeam(text) {
@@ -5981,6 +5998,10 @@
             if (next[0] > prev[0] && next[1] === prev[1]) return homeTeamName;
             if (next[1] > prev[1] && next[0] === prev[0]) return awayTeamName;
             return fallback;
+        }
+        function setNarrationVisible(on) {
+            const d = document.getElementById('narration');
+            if (d) d.classList.toggle('narration-idle', !on);
         }
         function paintNarration(div, team) {
             if (team) {
@@ -7717,6 +7738,9 @@
             narrationDiv.style.color = '#e0e0e0';
             narrationDiv.style.display = 'flex';
             narrationDiv.className = '';
+            setNarrationVisible(false);
+            skipSameMinuteGap = false;
+            prevShownPlayMinute = null;
             
             applyNarrationStyles();
 
@@ -7734,6 +7758,7 @@
                         narrationDiv.className = '';
                         applyNarrationStyles();
                         paintNarration(narrationDiv, pg.team);
+                        setNarrationVisible(true);
                         timeoutId = setTimeout(showNextLine, nextNarrationDelay());
                         return;
                     }
@@ -7816,14 +7841,31 @@
                         const colonIndex = line.indexOf(':');
                         if (colonIndex !== -1) {
                             const afterColon = stripLineAlias(line.substring(colonIndex + 1));
-                            // S29: minuto sin ocasiones (relleno «---»): recuadro neutro con texto propio
                             const fillerMin = /^-{3,}$/.test(afterColon.trim()) || afterColon.trim() === '';
-                            const minNum = parseInt(currentPlayMinute, 10) || 0;
+                            const incomingMin = (rawLine.match(/Minuto de juego\s+(\d+(?:\+\d+)?)/) || [])[1];
+                            const sameMinutePlay = prevShownPlayMinute != null && incomingMin != null && String(prevShownPlayMinute) === String(incomingMin);
+                            const seeking = !!(campoSeeking || campoSeekUntil != null || campoSeekPlayIndex != null || campoSeekUntilLine != null);
                             lastNamedTeam = fillerMin ? null : narrationActionTeam(afterColon, null);
-                            if (fillerMin) narrationDiv.textContent = minNum % 2 ? 'Sin ocasiones' : 'Balón en disputa'; else setNarrationText(narrationDiv, afterColon);
-                            narrationDiv.className = fillerMin ? 'filler-minute' : '';
-                            applyNarrationStyles();
-                            paintNarration(narrationDiv, (fillerMin || refereeLine || isNeutralLine(afterColon)) ? null : narrationActionTeam(afterColon, currentTeamColor));
+                            // S32: entre dos jugadas del mismo minuto el recuadro desaparece 1 s (el minuto no cambia; la Vista 2D sigue).
+                            if (sameMinutePlay && !fillerMin && !seeking && !skipSameMinuteGap) {
+                                setNarrationVisible(false);
+                                skipSameMinuteGap = true;
+                                timeoutId = setTimeout(showNextLine, 1000);
+                                return;
+                            }
+                            skipSameMinuteGap = false;
+                            if (fillerMin) {
+                                narrationDiv.textContent = '';
+                                narrationDiv.className = '';
+                                setNarrationVisible(false);
+                            } else {
+                                setNarrationText(narrationDiv, afterColon);
+                                narrationDiv.className = '';
+                                applyNarrationStyles();
+                                paintNarration(narrationDiv, (refereeLine || isNeutralLine(afterColon)) ? null : narrationActionTeam(afterColon, currentTeamColor));
+                                setNarrationVisible(true);
+                                prevShownPlayMinute = currentPlayMinute;
+                            }
                         }
                         lineIndex++;
                         timeoutId = setTimeout(showNextLine, nextNarrationDelay());
@@ -7915,6 +7957,7 @@
 
                         applyNarrationStyles();
                         paintNarration(narrationDiv, lineTeam);
+                        setNarrationVisible(true);
                         if (cleanLine.includes('Tarjeta amarilla')) {
                             narrationDiv.style.background = '#fbbf24';
                             narrationDiv.style.color = '#1e293b';
@@ -8036,6 +8079,9 @@
             narrationDiv.style.color = '#e0e0e0';
             narrationDiv.style.display = 'flex';
             narrationDiv.className = '';
+            setNarrationVisible(false);
+            skipSameMinuteGap = false;
+            prevShownPlayMinute = null;
             
             applyNarrationStyles();
             
