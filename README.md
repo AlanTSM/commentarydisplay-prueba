@@ -56,3 +56,4 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 - El título de la competición conserva «TSM», «UEFA» y el resto de siglas («Copa TSM T38 (Jue 26 nov)»).
 - El botón «Vista 2D BETA» es más pequeño y está más cerca del marcador.
 - En la Vista 2D, un desplegable entre «Cerrar» y «Pausar» permite elegir «Vista clásica 2D» o «Vista 3D (Estadio)» (perspectiva, jugadores con cuerpo al estilo Championship Manager 2007).
+- En Ajustes, debajo de «Tipo de alineaciones», hay una opción «Archivo de coordenadas (próximamente)», todavía deshabilitada.
