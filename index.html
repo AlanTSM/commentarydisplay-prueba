@@ -943,6 +943,15 @@
             color: #b8b8d1;
             font-weight: 600;
         }
+        /* S32: botón para reanudar tras un descanso, encima del minuto (también fuera de la Vista 2D) */
+        #period-resume-wrap { text-align: center; margin: 8px 0 6px; }
+        #period-resume {
+            font-size: 13px;
+            font-weight: 600;
+            padding: 6px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
         #narration {
             height: 80px;
             border: 2px solid #533d7d;
@@ -3081,6 +3090,7 @@
                     </div>
                 </div>
                 <div id="halftime-score"></div>
+                <div id="period-resume-wrap" hidden><button type="button" id="period-resume" onclick="resumeAfterBreak()"></button></div>
                 <div id="minute"></div>
                 <div id="match-status">
                     <div id="narration"></div>
@@ -5196,6 +5206,7 @@
             setNarrationVisible(false);
             skipSameMinuteGap = false;
             prevShownPlayMinute = null;
+            hidePeriodResume();
             document.getElementById('possession-bar').style.background = '';
             updatePossessionBar();
         }
@@ -7741,6 +7752,7 @@
             setNarrationVisible(false);
             skipSameMinuteGap = false;
             prevShownPlayMinute = null;
+            hidePeriodResume();
             
             applyNarrationStyles();
 
@@ -7991,14 +8003,27 @@
             else if (marker.kind === 'etHalf') { periodBreaks = Math.max(periodBreaks, 2); label = 'Iniciar segunda parte de la prórroga'; }
             else if (marker.kind === 'et') { periodBreaks = Math.max(periodBreaks, 1); label = 'Iniciar prórroga'; }
             else label = 'Iniciar tanda de penaltis';
-            if (!(window.Campo && typeof Campo.isShown === 'function' && Campo.isShown())) return false;
             isPaused = true;
             if (timeoutId) clearTimeout(timeoutId);
             const pauseButton = document.getElementById('pauseButton');
             if (pauseButton) pauseButton.textContent = 'Reanudar';
-            Campo.showResume(label);
-            if (typeof Campo.refresh === 'function') Campo.refresh();
+            showPeriodResume(label);
+            if (window.Campo && typeof Campo.isShown === 'function' && Campo.isShown()) {
+                Campo.showResume(label);
+                if (typeof Campo.refresh === 'function') Campo.refresh();
+            }
             return true;
+        }
+        function showPeriodResume(label) {
+            const b = document.getElementById('period-resume');
+            const w = document.getElementById('period-resume-wrap');
+            if (!b || !w) return;
+            b.textContent = label;
+            w.hidden = false;
+        }
+        function hidePeriodResume() {
+            const w = document.getElementById('period-resume-wrap');
+            if (w) w.hidden = true;
         }
         window.resumeAfterBreak = function() {
             if (isPaused) togglePause();
@@ -8006,7 +8031,10 @@
 
         function togglePause() {
             isPaused = !isPaused;
-            if (!isPaused && window.Campo && typeof Campo.hideResume === 'function') Campo.hideResume();
+            if (!isPaused) {
+                hidePeriodResume();
+                if (window.Campo && typeof Campo.hideResume === 'function') Campo.hideResume();
+            }
             const pauseButton = document.getElementById('pauseButton');
 
             if (isPaused) {
@@ -8082,6 +8110,7 @@
             setNarrationVisible(false);
             skipSameMinuteGap = false;
             prevShownPlayMinute = null;
+            hidePeriodResume();
             
             applyNarrationStyles();
             

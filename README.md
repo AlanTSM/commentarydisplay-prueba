@@ -44,3 +44,4 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 - Entre varias jugadas del mismo minuto el recuadro desaparece 1 segundo (el minuto no avanza; la Vista 2D no se altera).
 - En los minutos sin ocasiones el recuadro no aparece (el minuto sí avanza). «Omitir minutos sin ocasiones» sigue saltándolos del todo.
 - «MEDIA PARTE», «PRÓRROGA», «FINAL», «TANDA DE PENALTIS» y las líneas de resultado van en color neutro en todos los temas.
+- En cada descanso aparece encima del minuto un botón «Iniciar segunda parte», «Iniciar prórroga» o «Iniciar tanda de penaltis», también fuera de la Vista 2D; desaparece al pulsarlo.
