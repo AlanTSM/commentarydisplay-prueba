@@ -7833,6 +7833,12 @@
             simulationStarted = true;
             campoPlaysStarted = 0;
             periodBreaks = 0;
+            pendingGoalRest = null;
+            lastNamedTeam = null;
+            clearScorers();
+            clearScoreboardReds();
+            const scoreStart = document.getElementById('score');
+            if (scoreStart) { scoreStart.textContent = '0 - 0'; scoreStart.classList.remove('score-glow'); }
             if (window.Campo && typeof Campo.hideResume === 'function') Campo.hideResume();
             if (!campoSeeking) playWhistleSound();
             lineIndex = 0;
@@ -8171,11 +8177,18 @@
             campoSeekUntil = null;
             campoSeekPlayIndex = null;
             campoSeekUntilLine = null;
+            pendingGoalRest = null;
+            periodBreaks = 0;
+            prevHomeGoals = 0;
+            prevAwayGoals = 0;
+            lastNamedTeam = null;
             if (window.Campo && typeof Campo.hideResume === 'function') Campo.hideResume();
-            if (window.Campo && typeof Campo.resetView === 'function') Campo.resetView();
+            if (window.Campo && typeof Campo.closeView === 'function') Campo.closeView();
+            else if (window.Campo && typeof Campo.resetView === 'function') Campo.resetView();
             simulationStarted = false;
             if (timeoutId) {
                 clearTimeout(timeoutId);
+                timeoutId = null;
             }
             isPaused = false;
             currentTeamColor = '';
@@ -8184,7 +8197,12 @@
             recentPlays = [];
             momentumEvents = [];
             if (typeof renderMomentum === 'function') renderMomentum();
+            clearScorers();
+            clearScoreboardReds();
+            document.body.classList.remove('match-started');
+            setPossessionLive(false);
             updatePossessionBar();
+            matchStats = null;
             playerStats = null;
             const scoreEl = document.getElementById('score');
             scoreEl.classList.remove('score-glow');
@@ -8246,6 +8264,11 @@
 
             document.getElementById('ratings-message').style.display = 'block';
             document.getElementById('ratings-content').style.display = 'none';
+
+            const expMsg = document.getElementById('experience-message');
+            const expCnt = document.getElementById('experience-content');
+            if (expMsg) expMsg.style.display = 'block';
+            if (expCnt) expCnt.style.display = 'none';
 
             if (currentHomeStarters.length) {
                 renderLineups();

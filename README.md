@@ -50,3 +50,6 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 - Botón «Vista 2D BETA» encima de «Comenzar partido»: abre la vista 2D a pantalla completa (como «Ampliar»). La pestaña pasa a llamarse «Momentum» y muestra el ritmo del partido en tiempo real, sin spoilers y sin contar cambios, tácticas ni instrucciones del mánager.
 - La tanda de penaltis en la Vista 2D va al ritmo de los comentarios (ya no se adelanta).
 - El comentario «X se impone desde los 11 metros» (y «X gana la tanda») va con el color del ganador. En la tanda, las intervenciones del portero llevan su color.
+
+### S34
+- «Reiniciar» deja la pantalla como al acabar de pegar el partido (sin goleadores, eventos, momentum ni recuadros).
