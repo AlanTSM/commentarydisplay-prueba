@@ -1008,6 +1008,8 @@
             font-style: italic;
             opacity: 0.85;
         }
+        #narration .narr-text { min-width: 0; }
+        #narration .narr-player { font-weight: 800; }
         #possession-bar-container {
             margin-top: 15px;
         }
@@ -5920,15 +5922,25 @@
             return null;
         }
         // S31: nombres de los jugadores en negrita en el recuadro de narración
+        // S32: el recuadro es flex, así que el contenido va en un único span (si no, los espacios junto a <b> se colapsan).
+        // Se garantiza un espacio delante y detrás del nombre, sin duplicarlo ni ponerlo antes de puntuación.
         function setNarrationText(div, text) {
             const t = String(text || '');
             let ms = [];
             try { ms = findPlayerMatches(t); } catch (e) { ms = []; }
-            if (!ms.length) { div.textContent = t; return; }
             const esc = x => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const punct = /[\s,.;:!?…)}\]'»"]/;
             let out = '', last = 0;
-            ms.forEach(f => { out += esc(t.substring(last, f.index)) + '<b class="narr-player">' + esc(t.substring(f.index, f.end)) + '</b>'; last = f.end; });
-            div.innerHTML = out + esc(t.substring(last));
+            ms.forEach(f => {
+                let before = t.substring(last, f.index);
+                const name = t.substring(f.index, f.end);
+                if (before.length && !/\s$/.test(before) && name.length && !punct.test(name[0])) before += ' ';
+                let padAfter = '';
+                if (f.end < t.length && !punct.test(t[f.end])) padAfter = ' ';
+                out += esc(before) + '<b class="narr-player">' + esc(name) + '</b>' + padAfter;
+                last = f.end;
+            });
+            div.innerHTML = '<span class="narr-text">' + out + esc(t.substring(last)) + '</span>';
         }
         function otherTeamName(team) {
             if (team === homeTeamName) return awayTeamName;
