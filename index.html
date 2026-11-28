@@ -6060,7 +6060,7 @@
         function isNeutralLine(text) { return NEUTRAL_LINE_RE.test(stripAccents(String(text || '')).toLowerCase().trim()); }
         // «Real Madrid gana la tanda de penaltis»: color del ganador
         function shootoutWinnerTeam(text) {
-            const m = String(text || '').match(/^(.+?)\s+gana la tanda/i);
+            const m = String(text || '').match(/^(.+?)\s+(?:gana la tanda|se impone desde los (?:11|once) metros)/i);
             if (!m) return null;
             const t = stripAccents(m[1]).toLowerCase().trim();
             if (t === stripAccents(homeTeamName).toLowerCase()) return homeTeamName;
