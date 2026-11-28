@@ -6574,7 +6574,7 @@
         var clock = window.getCampoClock ? window.getCampoClock() : {};
         if (clock.seeking || clock.paused || clock.finished) return true;
         var seg = pb.seg;
-        if (seg.i < 0 || seg.kind === 'shootout' || seg.kind === 'shootout-kick') return true;
+        if (seg.i < 0) return true;   // S33: la tanda también espera a la narración (antes se desincronizaba)
         if (lastPlayIndex !== seg.i) return true;
         if (info.minute || info.marker) return pb.s >= segLimit(seg) - 6;
         var rv = segReveal(seg), raw = normLine(info.raw);
