@@ -731,6 +731,36 @@
             padding: 6px 16px;
             font-size: 13px;
         }
+        /* S33: botón para abrir la Vista 2D (debajo queda «Comenzar partido») */
+        #campo-open-wrap { text-align: center; margin: 0 0 8px; }
+        #campo-open-btn {
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            padding: 6px 16px;
+            text-transform: uppercase;
+        }
+        #campo-open-btn .tab-beta { margin-left: 4px; }
+        #momentum-wrap { padding: 8px 4px 16px; }
+        #momentum-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #b8b8d1;
+        }
+        #momentum-title { font-weight: 700; letter-spacing: 0.4px; color: #e0e0e0; }
+        #momentum-home-label, #momentum-away-label { font-weight: 600; max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #momentum-chart {
+            width: 100%;
+            height: 220px;
+            background: #161625;
+            border: 1px solid #533d7d;
+            border-radius: 8px;
+            display: block;
+        }
+        #momentum-note { font-size: 12px; color: #8a8aa8; margin: 10px 4px 0; line-height: 1.4; }
         #pauseButton {
             background: linear-gradient(180deg, #f72585 0%, #b5179e 100%);
             border: 2px solid #f72585;
@@ -3091,6 +3121,7 @@
                 </div>
                 <div id="halftime-score"></div>
                 <div id="period-resume-wrap" hidden><button type="button" id="period-resume" onclick="resumeAfterBreak()"></button></div>
+                <div id="campo-open-wrap"><button type="button" id="campo-open-btn" onclick="openCampoView()" title="Abrir la vista 2D a pantalla completa">Vista 2D <span class="tab-beta">Beta</span></button></div>
                 <div id="minute"></div>
                 <div id="match-status">
                     <div id="narration"></div>
@@ -3109,7 +3140,7 @@
                 <div class="tab" onclick="switchTab('highlights-tab')">Eventos</div>
                 <div class="tab" onclick="switchTab('ratings-tab')">Puntuaciones</div>
                 <div class="tab" onclick="switchTab('experience-tab')">Pts. Exp.</div>
-                <div class="tab" onclick="switchTab('campo-tab')">Vista 2D <span class="tab-beta" title="En desarrollo: no es la versión definitiva">Beta</span></div>
+                <div class="tab" onclick="switchTab('momentum-tab')">Momentum</div>
                 <span class="settings-icon" onclick="openSettingsPopup()" title="Configuración" aria-label="Configuración" role="button">⚙️</span>
             </div>
 
@@ -3218,8 +3249,16 @@
                 </div>
             </div>
 
-            <div id="campo-tab" class="tab-content">
-                <div id="campo-root"></div>
+            <div id="momentum-tab" class="tab-content">
+                <div id="momentum-wrap">
+                    <div id="momentum-header">
+                        <div id="momentum-home-label"></div>
+                        <div id="momentum-title">Momentum</div>
+                        <div id="momentum-away-label"></div>
+                    </div>
+                    <svg id="momentum-chart" viewBox="0 0 800 260" preserveAspectRatio="none" role="img" aria-label="Momentum del partido"></svg>
+                    <p id="momentum-note">El gráfico se va dibujando a medida que avanza el partido, sin adelantar lo que aún no se ha narrado. No cuenta cambios, tácticas ni instrucciones del mánager.</p>
+                </div>
             </div>
         </div>
     </div>
@@ -4047,8 +4086,8 @@
                     document.getElementById('experience-message').style.display = 'block';
                     document.getElementById('experience-content').style.display = 'none';
                 }
-            } else if (tabId === 'campo-tab') {
-                if (window.Campo && typeof Campo.onShow === 'function') Campo.onShow();
+            } else if (tabId === 'momentum-tab') {
+                renderMomentum();
             }
         }
         
@@ -5163,6 +5202,8 @@
             currentPlayTeam = null;
             displayedEvents.clear();
             recentPlays = [];
+            momentumEvents = [];
+            if (typeof renderMomentum === 'function') renderMomentum();
             rewindStack = [];
             redCardedPlayers.clear();
             substitutedPairs.clear();
@@ -5579,6 +5620,76 @@
                 narrationDiv.style.color = colors.secondary;
             }
         }
+
+        // S33: momentum en tiempo real (solo jugadas ya narradas; ignora cambios, táctica e instrucciones).
+        let momentumEvents = [];
+        function recordMomentum(team, weight) {
+            if (inShootout || !team) return;
+            const side = team === homeTeamName ? 1 : (team === awayTeamName ? -1 : 0);
+            if (!side) return;
+            momentumEvents.push({ m: minuteValue(currentPlayMinute || 0), side: side, w: weight || 1 });
+            renderMomentum();
+        }
+        function momentumAt(t) {
+            let v = 0;
+            for (let i = 0; i < momentumEvents.length; i++) {
+                const e = momentumEvents[i];
+                if (e.m <= t + 1e-6) v += e.side * (e.w || 1) * Math.exp(-(t - e.m) / 7);
+            }
+            return Math.tanh(v / 2.2);
+        }
+        function renderMomentum() {
+            const svg = document.getElementById('momentum-chart');
+            if (!svg) return;
+            const homeEl = document.getElementById('momentum-home-label');
+            const awayEl = document.getElementById('momentum-away-label');
+            if (homeEl) homeEl.textContent = homeTeamName || 'Local';
+            if (awayEl) awayEl.textContent = awayTeamName || 'Visitante';
+            const hc = getTeamColors(homeTeamName || ''), ac = getTeamColors(awayTeamName || '');
+            if (homeEl) homeEl.style.color = hc.primary;
+            if (awayEl) awayEl.style.color = ac.primary;
+            const W = 800, H = 260, L = 44, R = 18, T = 18, B = 36;
+            const plotW = W - L - R, plotH = H - T - B, mid = T + plotH / 2;
+            let end = 90;
+            const cur = simulationStarted ? minuteValue(currentPlayMinute || 0) : 0;
+            if (cur > 90) end = cur <= 105 ? 105 : 120;
+            if (matchFinished && cur > end) end = Math.max(90, Math.ceil(cur));
+            const shown = simulationStarted ? Math.min(end, Math.max(cur, 0)) : 0;
+            const xOf = t => L + (t / end) * plotW;
+            const yOf = v => mid - v * (plotH / 2 - 2);
+            const ticks = [];
+            for (let t = 0; t <= end; t += 15) ticks.push(t);
+            if (ticks[ticks.length - 1] !== end) ticks.push(end);
+            let d = '';
+            const pts = [];
+            if (simulationStarted) {
+                for (let t = 0; t <= shown + 1e-9; t += 0.5) {
+                    const x = xOf(t), y = yOf(momentumAt(t));
+                    pts.push([x, y]);
+                    d += (t === 0 ? 'M' : 'L') + x.toFixed(1) + ' ' + y.toFixed(1) + ' ';
+                }
+            }
+            const areaHome = pts.length ? ('M ' + pts[0][0].toFixed(1) + ' ' + mid + ' ' + pts.map(p => 'L ' + p[0].toFixed(1) + ' ' + Math.min(p[1], mid).toFixed(1)).join(' ') + ' L ' + pts[pts.length-1][0].toFixed(1) + ' ' + mid + ' Z') : '';
+            const areaAway = pts.length ? ('M ' + pts[0][0].toFixed(1) + ' ' + mid + ' ' + pts.map(p => 'L ' + p[0].toFixed(1) + ' ' + Math.max(p[1], mid).toFixed(1)).join(' ') + ' L ' + pts[pts.length-1][0].toFixed(1) + ' ' + mid + ' Z') : '';
+            const grid = ticks.map(t => '<line x1="'+xOf(t).toFixed(1)+'" y1="'+T+'" x2="'+xOf(t).toFixed(1)+'" y2="'+(T+plotH)+'" stroke="#2a2a40" stroke-width="1"/>').join('');
+            const labels = ticks.map(t => '<text x="'+xOf(t).toFixed(1)+'" y="'+(H-12)+'" text-anchor="middle" fill="#8a8aa8" font-size="11">'+t+"'"+'</text>').join('');
+            const playMarks = momentumEvents.filter(e => e.m <= shown + 1e-6).map(e => {
+                const x = xOf(Math.min(e.m, end)), y = yOf(momentumAt(e.m));
+                const col = e.side > 0 ? hc.primary : ac.primary;
+                return '<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(e.w>=2?3.2:2)+'" fill="'+col+'" opacity="0.9"/>';
+            }).join('');
+            const emptyMsg = !simulationStarted ? '<text x="400" y="125" text-anchor="middle" fill="#8a8aa8" font-size="14">El momentum aparecerá al comenzar el partido</text>' : '';
+            svg.innerHTML = '<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="#161625"/>'+grid+
+                '<line x1="'+L+'" y1="'+mid+'" x2="'+(W-R)+'" y2="'+mid+'" stroke="#533d7d" stroke-width="1.2"/>'+
+                '<path d="'+areaHome+'" fill="'+hc.primary+'" opacity="0.35"/>'+
+                '<path d="'+areaAway+'" fill="'+ac.primary+'" opacity="0.35"/>'+
+                (d ? '<path d="'+d.trim()+'" fill="none" stroke="#e0e0e0" stroke-width="1.8" stroke-linejoin="round"/>' : '')+
+                playMarks+
+                '<text x="'+(L-8)+'" y="'+(T+10)+'" text-anchor="end" fill="#8a8aa8" font-size="10">Local</text>'+
+                '<text x="'+(L-8)+'" y="'+(T+plotH-2)+'" text-anchor="end" fill="#8a8aa8" font-size="10">Visit.</text>'+
+                labels+emptyMsg;
+        }
+        window.renderMomentum = renderMomentum;
 
         function updatePossessionBar() {
             const bar = document.getElementById('possession-bar');
@@ -7004,6 +7115,8 @@
                 for (let i = oa; i < na; i++) addScorer('away');
                 for (let i = nh; i < oh; i++) removeScorer('home');
                 for (let i = na; i < oa; i++) removeScorer('away');
+                for (let i = oh; i < nh; i++) recordMomentum(homeTeamName, 2.4);
+                for (let i = oa; i < na; i++) recordMomentum(awayTeamName, 2.4);
             }
             scoreEl.textContent = newScore;
             if (!isGoal) { scoreEl.classList.remove('score-glow'); return; }   // S31: el glow, solo con goles
@@ -7295,6 +7408,7 @@
                 subOutReasonMap: {...subOutReasonMap},
                 currentTeamColor: currentTeamColor,
                 recentPlays: [...recentPlays],
+                momentumEvents: momentumEvents.map(e => ({ ...e })),
                 currentPlayRawLines: [...currentPlayRawLines],
                 currentPlayFormattedLines: [...currentPlayFormattedLines],
                 currentPlayMinute: currentPlayMinute,
@@ -7334,6 +7448,8 @@
             subOutReasonMap = {...target.subOutReasonMap};
             currentTeamColor = target.currentTeamColor;
             recentPlays = [...target.recentPlays];
+            momentumEvents = (target.momentumEvents || []).map(e => ({ ...e }));
+            renderMomentum();
             currentPlayRawLines = target.currentPlayRawLines;
             currentPlayFormattedLines = target.currentPlayFormattedLines;
             currentPlayMinute = target.currentPlayMinute;
@@ -7727,6 +7843,8 @@
             prevAwayGoals = 0;
             displayedEvents.clear();
             recentPlays = [];
+            momentumEvents = [];
+            if (typeof renderMomentum === 'function') renderMomentum();
             redCardedPlayers.clear();
             substitutedPairs.clear();
             subbedInPlayers.clear();
@@ -7840,6 +7958,7 @@
                                 recentPlays.push(detectedTeam);
                                 if (recentPlays.length > 10) recentPlays.shift();
                                 updatePossessionBar();
+                                recordMomentum(detectedTeam, 1);
                             }
                         }
                         const tacticChange = detectTacticChange(rawLine, detectedTeam);
@@ -8063,6 +8182,8 @@
             matchFinished = false;
             displayedEvents.clear();
             recentPlays = [];
+            momentumEvents = [];
+            if (typeof renderMomentum === 'function') renderMomentum();
             updatePossessionBar();
             playerStats = null;
             const scoreEl = document.getElementById('score');
@@ -8696,8 +8817,11 @@
         window.switchTab = switchTab;
         // Icono de tele de la pestaña «Eventos»: abre la Vista 2D y reproduce ese gol.
         window.watchGoal2D = function(label, player) {
-            switchTab('campo-tab');
+            if (window.Campo && typeof Campo.openView === 'function') Campo.openView();
             if (window.Campo && typeof Campo.watchGoal === 'function') Campo.watchGoal(label, player);
+        };
+        window.openCampoView = function() {
+            if (window.Campo && typeof Campo.openView === 'function') Campo.openView();
         };
         window.pasteFromClipboard = pasteFromClipboard;
         window.toggleInput = toggleInput;
@@ -8722,6 +8846,7 @@
         window.highlightStatsCells = highlightStatsCells;
         window.toggleStatsView = toggleStatsView;
     </script>
+    <div id="campo-root"></div>
     <script src="campo.js"></script>
 </body>
 </html>

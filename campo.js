@@ -5706,10 +5706,10 @@
         ui.play.addEventListener('click', onPlayClick);
         ui.fs.addEventListener('click', toggleExpanded);
         document.addEventListener('fullscreenchange', function () {
-            if (!document.fullscreenElement && wrap.classList.contains('campo-expanded')) setExpanded(false, true);
+            if (!document.fullscreenElement && wrap.classList.contains('campo-expanded')) closeView(true);
         });
         document.addEventListener('keydown', function (ev) {
-            if (ev.key === 'Escape' && wrap.classList.contains('campo-expanded')) setExpanded(false);
+            if (ev.key === 'Escape' && wrap.classList.contains('campo-expanded')) closeView();
         });
         ui.slider.addEventListener('input', onSliderInput);
         ui.slider.addEventListener('change', onSliderChange);
@@ -5750,7 +5750,20 @@
 
     function toggleExpanded() {
         var wrap = root && root.querySelector('.campo-wrap');
-        setExpanded(!(wrap && wrap.classList.contains('campo-expanded')));
+        if (wrap && wrap.classList.contains('campo-expanded')) closeView();
+        else openView();
+    }
+    // S33: la Vista 2D se abre a pantalla completa (como «Ampliar»), ya no vive en una pestaña.
+    function openView() {
+        ensureUI();
+        if (root) root.classList.add('campo-open');
+        setExpanded(true);
+        onShow();
+        refresh();
+    }
+    function closeView(fromEvent) {
+        setExpanded(false, fromEvent);
+        if (root) root.classList.remove('campo-open');
     }
 
     function onPlayClick() {
@@ -6440,16 +6453,8 @@
                 if (el) obs.observe(el, { childList: true, characterData: true, subtree: true });
             });
         }
-        document.addEventListener('click', function (ev) {
-            var t = ev.target;
-            if (t && t.classList && t.classList.contains('tab')) {
-                var oc = t.getAttribute('onclick') || '';
-                if (oc.indexOf('campo-tab') !== -1) setTimeout(onShow, 0);
-            }
-        });
         setInterval(function () {
-            var tab = $('campo-tab');
-            if (tab && tab.classList.contains('active')) refresh();
+            if (isShown()) refresh();
         }, 400);
     }
 
@@ -6588,8 +6593,7 @@
     }
     function hideResume() { if (ui.resume) ui.resume.hidden = true; }
     function isShown() {
-        var tab = $('campo-tab');
-        return !!(tab && tab.classList.contains('active') && tl && !window.__campoNoChoreo);
+        return !!(root && root.classList.contains('campo-open') && tl && !window.__campoNoChoreo);
     }
 
     window.Campo = {
@@ -6601,6 +6605,8 @@
         isShown: isShown,
         lineReady: lineReady,
         onShow: onShow,
+        openView: openView,
+        closeView: closeView,
         resetView: resetView,
         // Solo para pruebas: deja el campo en la fase k de la jugada i (sin animación).
         debugShowPhase: function (i, k) {

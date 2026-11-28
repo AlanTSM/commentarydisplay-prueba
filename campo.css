@@ -1,8 +1,11 @@
 /* Vista de campo 2D (rama vista-campo). No altera el resto de la página. */
 
-#campo-tab {
+#campo-tab, #momentum-tab {
     padding: 16px;
 }
+/* S33: la vista 2D se abre como capa a pantalla completa; el contenedor no ocupa sitio en la página */
+#campo-root { display: none; }
+#campo-root.campo-open { display: block; }
 
 .campo-wrap {
     /* Por defecto algo más pequeño: el campo entero cabe en pantallas normales (alto disponible ≈ 1,5 × ancho). */
