@@ -40,3 +40,4 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 
 ### S32
 - Nombres en negrita del recuadro de narración: espacio delante y detrás, sin pegarse al texto ni añadir espacio antes de comas o puntos.
+- Escudos y nombres del marcador siempre a la misma altura; la lista de goleadores queda debajo y no los desplaza.
