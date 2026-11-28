@@ -54,3 +54,4 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 ### S34
 - «Reiniciar» deja la pantalla como al acabar de pegar el partido (sin goleadores, eventos, momentum ni recuadros).
 - El título de la competición conserva «TSM», «UEFA» y el resto de siglas («Copa TSM T38 (Jue 26 nov)»).
+- El botón «Vista 2D BETA» es más pequeño y está más cerca del marcador.
