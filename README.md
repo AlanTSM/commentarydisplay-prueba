@@ -58,3 +58,5 @@ Para probar un partido, pega su informe en el cuadro de texto y abre la pestaña
 - En la Vista 2D, un desplegable entre «Cerrar» y «Pausar» permite elegir «Vista clásica 2D» o «Vista 3D (Estadio)» (perspectiva, jugadores con cuerpo al estilo Championship Manager 2007).
 - En Ajustes, debajo de «Tipo de alineaciones», hay una opción «Archivo de coordenadas (próximamente)», todavía deshabilitada.
 - Las líneas de resultado en el recuadro ya no llevan los tres puntos finales («RB Leipzig 0-3 PSG»).
+- Los botones «Reanudar», «Reiniciar», «Retroceder 5 jugadas» e «Ir al final» tienen un diseño unificado, al estilo de un videojuego actual.
+- El texto del recuadro de narración lleva un contorno fino negro o blanco, según el color de fondo, para leerse con claridad.

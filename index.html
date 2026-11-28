@@ -88,12 +88,14 @@
         }
 
         body.theme-uefa-europa #resetButton,
+        body.theme-uefa-europa #rewindButton,
         body.theme-uefa-europa #fastForwardButton {
             background: linear-gradient(180deg, #00a8ff 0%, #0077cc 100%);
             border-color: #66cfff;
         }
 
         body.theme-uefa-europa #resetButton:hover,
+        body.theme-uefa-europa #rewindButton:hover:not(:disabled),
         body.theme-uefa-europa #fastForwardButton:hover {
             background: linear-gradient(180deg, #66cfff 0%, #00a8ff 100%);
             box-shadow: 0 4px 12px rgba(102, 207, 255, 0.4);
@@ -195,12 +197,14 @@
         }
 
         body.theme-uefa-champions #resetButton,
+        body.theme-uefa-champions #rewindButton,
         body.theme-uefa-champions #fastForwardButton {
             background: linear-gradient(180deg, #00cc88 0%, #00aa66 100%);
             border-color: #00ffaa;
         }
 
         body.theme-uefa-champions #resetButton:hover,
+        body.theme-uefa-champions #rewindButton:hover:not(:disabled),
         body.theme-uefa-champions #fastForwardButton:hover {
             background: linear-gradient(180deg, #00ffaa 0%, #00cc88 100%);
             box-shadow: 0 4px 12px rgba(0, 255, 170, 0.4);
@@ -302,12 +306,14 @@
         }
 
         body.theme-uefa-conference #resetButton,
+        body.theme-uefa-conference #rewindButton,
         body.theme-uefa-conference #fastForwardButton {
             background: linear-gradient(180deg, #ffaa00 0%, #ff8800 100%);
             border-color: #ffcc00;
         }
 
         body.theme-uefa-conference #resetButton:hover,
+        body.theme-uefa-conference #rewindButton:hover:not(:disabled),
         body.theme-uefa-conference #fastForwardButton:hover {
             background: linear-gradient(180deg, #ffcc00 0%, #ffaa00 100%);
             box-shadow: 0 4px 12px rgba(255, 204, 0, 0.4);
@@ -410,12 +416,14 @@
         }
 
         body.theme-copa-tsm #resetButton,
+        body.theme-copa-tsm #rewindButton,
         body.theme-copa-tsm #fastForwardButton {
             background: linear-gradient(180deg, #ffaa00 0%, #ff8800 100%);
             border-color: #ffcc00;
         }
 
         body.theme-copa-tsm #resetButton:hover,
+        body.theme-copa-tsm #rewindButton:hover:not(:disabled),
         body.theme-copa-tsm #fastForwardButton:hover {
             background: linear-gradient(180deg, #ffcc00 0%, #ffaa00 100%);
             box-shadow: 0 4px 12px rgba(255, 204, 0, 0.4);
@@ -518,12 +526,14 @@
         }
 
         body.theme-simple #resetButton,
+        body.theme-simple #rewindButton,
         body.theme-simple #fastForwardButton {
             background: linear-gradient(180deg, #ffaa00 0%, #ff8800 100%);
             border-color: #ffcc00;
         }
 
         body.theme-simple #resetButton:hover,
+        body.theme-simple #rewindButton:hover:not(:disabled),
         body.theme-simple #fastForwardButton:hover {
             background: linear-gradient(180deg, #ffcc00 0%, #ffaa00 100%);
             box-shadow: 0 4px 12px rgba(255, 204, 0, 0.4);
@@ -574,7 +584,8 @@
         body.theme-simple { background: #eceef2; }
         body.theme-simple .settings-popup, body.theme-simple .settings-popup label, body.theme-simple .settings-popup h3, body.theme-simple .settings-popup span { color: #1e1e30; }
         body.theme-simple .tab.active, body.theme-simple button { color: #1e1e30; }
-        body.theme-simple #pauseButton, body.theme-simple #resetButton, body.theme-simple #fastForwardButton { color: #ffffff; }
+        body.theme-simple #pauseButton, body.theme-simple #resetButton, body.theme-simple #rewindButton,
+        body.theme-simple #fastForwardButton { color: #ffffff; }
         body.theme-simple #stadium-capacity, body.theme-simple #referee-info, body.theme-simple #weather-info, body.theme-simple #match-time-info { color: #4a4a5a; }
 
         .container {
@@ -763,43 +774,31 @@
         #momentum-note { font-size: 12px; color: #8a8aa8; margin: 10px 4px 0; line-height: 1.4; }
         #pauseButton {
             background: linear-gradient(180deg, #f72585 0%, #b5179e 100%);
-            border: 2px solid #f72585;
-            padding: 8px 20px;
+            border-color: #ff7ab8;
         }
         #pauseButton:hover {
             background: linear-gradient(180deg, #ff4fa1 0%, #c51fad 100%);
-            box-shadow: 0 4px 12px rgba(247, 37, 133, 0.4);
         }
-        #resetButton {
-            background: linear-gradient(180deg, #4cc9f0 0%, #3a0ca3 100%);
-            border: 2px solid #4cc9f0;
-            padding: 8px 20px;
-        }
-        #resetButton:hover {
-            background: linear-gradient(180deg, #72deff 0%, #4a0fb3 100%);
-            box-shadow: 0 4px 12px rgba(76, 201, 240, 0.4);
-        }
+        #resetButton, #rewindButton,
         #fastForwardButton {
-            background: linear-gradient(180deg, #4cc9f0 0%, #3a0ca3 100%);
-            border: 2px solid #4cc9f0;
-            padding: 8px 20px;
+            background: linear-gradient(180deg, #6e5cff 0%, #3a0ca3 100%);
+            border-color: #9d8cff;
         }
-        #fastForwardButton:hover {
-            background: linear-gradient(180deg, #72deff 0%, #4a0fb3 100%);
-            box-shadow: 0 4px 12px rgba(76, 201, 240, 0.4);
+        #resetButton:hover, #rewindButton:hover:not(:disabled), #fastForwardButton:hover {
+            background: linear-gradient(180deg, #8b7cff 0%, #4a0fb3 100%);
         }
-        #rewindButton {
-            background: linear-gradient(180deg, #f0a500 0%, #d18e00 100%);
-            border: 2px solid #f0a500;
-            padding: 8px 20px;
+        #pauseButton {
+            background: linear-gradient(180deg, #f72585 0%, #b5179e 100%);
+            border-color: #ff7ab8;
         }
-        #rewindButton:hover:not(:disabled) {
-            background: linear-gradient(180deg, #ffb730 0%, #f0a500 100%);
-            box-shadow: 0 4px 12px rgba(240, 165, 0, 0.4);
+        #pauseButton:hover {
+            background: linear-gradient(180deg, #ff4fa1 0%, #c51fad 100%);
         }
         #rewindButton:disabled {
-            opacity: 0.5;
+            opacity: 0.45;
             cursor: not-allowed;
+            filter: none;
+            transform: none;
         }
         #pasteButton {
             background: linear-gradient(180deg, #4cc9f0 0%, #3a0ca3 100%);
@@ -831,8 +830,33 @@
             justify-content: flex-start;
             align-items: center;
             margin: 0 0 15px 0;
-            gap: 15px;
+            gap: 8px;
             flex-wrap: wrap;
+        }
+        #control-bar button {
+            font-family: inherit;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.25px;
+            line-height: 1.2;
+            padding: 8px 16px;
+            min-height: 40px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.22);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), 0 3px 8px rgba(0,0,0,0.28);
+            text-shadow: 0 1px 1px rgba(0,0,0,0.35);
+            color: #fff;
+            cursor: pointer;
+            transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+        }
+        #control-bar button:hover:not(:disabled) {
+            transform: translateY(-1px);
+            filter: brightness(1.08);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.3), 0 5px 14px rgba(0,0,0,0.35);
+        }
+        #control-bar button:active:not(:disabled) {
+            transform: translateY(1px);
+            box-shadow: inset 0 2px 5px rgba(0,0,0,0.35);
         }
         /* S31: tarjetas rojas en las esquinas superiores del marcador (una por roja, cuando la narración la muestra) */
         /* S31: con el partido empezado, en el hueco de «Colores suplentes» van los goleadores (al encenderse el glow) */
@@ -1048,6 +1072,18 @@
         }
         #narration .narr-text { min-width: 0; }
         #narration .narr-player { font-weight: 800; }
+        #narration, #narration .narr-text, #narration .narr-player {
+            --narr-outline: #ffffff;
+            text-shadow:
+                -1px -1px 0 var(--narr-outline),
+                 1px -1px 0 var(--narr-outline),
+                -1px  1px 0 var(--narr-outline),
+                 1px  1px 0 var(--narr-outline),
+                -1px  0   0 var(--narr-outline),
+                 1px  0   0 var(--narr-outline),
+                 0   -1px 0 var(--narr-outline),
+                 0    1px 0 var(--narr-outline);
+        }
         /* S32: el recuadro se oculta cuando no hay comentario o entre jugadas del mismo minuto */
         #narration.narration-idle {
             visibility: hidden;
@@ -6137,6 +6173,16 @@
             const d = document.getElementById('narration');
             if (d) d.classList.toggle('narration-idle', !on);
         }
+        function narrOutlineColor(bg) {
+            let rgb = (typeof hexToRgbCD === 'function') ? hexToRgbCD(bg) : null;
+            if (!rgb) {
+                const m = String(bg || '').match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+                if (m) rgb = [+m[1], +m[2], +m[3]];
+            }
+            if (!rgb) return '#ffffff';
+            const L = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            return L > 155 ? '#111111' : '#ffffff';
+        }
         function paintNarration(div, team) {
             if (team) {
                 const colors = getTeamColors(team);
@@ -6144,9 +6190,11 @@
                 div.style.color = colors.secondary;
                 div.style.setProperty('--gbg', colors.primary);
                 div.style.setProperty('--gfg', colors.secondary);
+                div.style.setProperty('--narr-outline', narrOutlineColor(colors.primary));
             } else {
                 div.style.background = '#1e1e30';
                 div.style.color = '#e0e0e0';
+                div.style.setProperty('--narr-outline', '#ffffff');
             }
         }
 
