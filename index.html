@@ -4882,7 +4882,7 @@
                             formattedLine = (popupGoal[1] || '') + '¡¡¡GOOOOOOL!!!' + formattedLine.substring(popupGoal[0].length);
                         }
 
-                        div.textContent = formattedLine;
+                        div.textContent = stripScoreEllipsis(formattedLine);
                         
                         popupNarration.appendChild(div);
                     });
@@ -6076,8 +6076,14 @@
         // S31: nombres de los jugadores en negrita en el recuadro de narración
         // S32: el recuadro es flex, así que el contenido va en un único span (si no, los espacios junto a <b> se colapsan).
         // Se garantiza un espacio delante y detrás del nombre, sin duplicarlo ni ponerlo antes de puntuación.
-        function setNarrationText(div, text) {
+        function stripScoreEllipsis(text) {
             const t = String(text || '');
+            // «RB Leipzig 0-3 PSG ...» / «Inter de Milán 1-0 Bayern de Múnich...»
+            if (/(?:^|\s)\d{1,2}\s*-\s*\d{1,2}\s+\S/.test(t)) return t.replace(/\s*\.{3,}\s*$/, '').trimEnd();
+            return t;
+        }
+        function setNarrationText(div, text) {
+            const t = stripScoreEllipsis(String(text || ''));
             let ms = [];
             try { ms = findPlayerMatches(t); } catch (e) { ms = []; }
             const esc = x => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
